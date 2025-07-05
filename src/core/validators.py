@@ -141,10 +141,25 @@ def validate_full_name(name: Optional[str]) -> Optional[str]:
 
 def sanitize_string(value: str, max_length: int = 255) -> str:
     """
-    Sanitize string input
+    Sanitize string input to prevent injection attacks
     """
-    # Remove null bytes
-    value = value.replace("\x00", "")
+    if not value:
+        return value
+    
+    # Remove null bytes and control characters
+    value = ''.join(char for char in value if ord(char) >= 32 or char in '\t\n\r')
+    
+    # Remove potential SQL injection patterns
+    dangerous_patterns = [
+        '--', '/*', '*/', 'xp_', 'sp_', 'exec', 'execute',
+        'select', 'insert', 'update', 'delete', 'drop', 'union',
+        'script', 'javascript:', 'vbscript:', 'onload=', 'onerror='
+    ]
+    
+    value_lower = value.lower()
+    for pattern in dangerous_patterns:
+        if pattern in value_lower:
+            value = value.replace(pattern, '').replace(pattern.upper(), '')
     
     # Trim whitespace
     value = value.strip()

@@ -22,7 +22,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from main import app
 from models.user import Base as UserBase
-from models.audit import Base as AuditBase
+# Note: AuditBase removed as audit functionality migrated to Audit Service
 from core.database import get_db
 
 
@@ -52,14 +52,11 @@ async def setup_database(engine):
     async with engine.begin() as conn:
         # Drop all tables
         await conn.run_sync(UserBase.metadata.drop_all)
-        await conn.run_sync(AuditBase.metadata.drop_all)
         # Create all tables
         await conn.run_sync(UserBase.metadata.create_all)
-        await conn.run_sync(AuditBase.metadata.create_all)
     yield
     async with engine.begin() as conn:
         await conn.run_sync(UserBase.metadata.drop_all)
-        await conn.run_sync(AuditBase.metadata.drop_all)
 
 
 @pytest.fixture

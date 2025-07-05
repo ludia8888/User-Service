@@ -185,9 +185,17 @@ async def register(
             )
         )
     except Exception as e:
+        # Log error without exposing internal details
+        await audit_service.log_suspicious_activity(
+            user_id=None,
+            ip_address=request.client.host if request.client else "unknown",
+            activity="registration_error",
+            details={"username": register_request.username, "error": "registration_failed"}
+        )
+        
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to register user: {str(e)}"
+            detail="Registration failed. Please try again."
         )
 
 

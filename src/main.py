@@ -17,7 +17,8 @@ from core.database import init_db
 from core.logging import setup_logging
 from core.security_headers import SecurityHeadersMiddleware
 from core.rate_limit import RateLimitMiddleware
-from api import auth, iam_adapter
+from middleware.api_key_auth import ServiceAuthMiddleware
+from api import auth, iam_adapter, internal
 
 # Setup logging
 setup_logging()
@@ -97,17 +98,23 @@ app.add_middleware(SecurityHeadersMiddleware, strict=not settings.DEBUG)
 # Add rate limiting middleware
 app.add_middleware(RateLimitMiddleware)
 
+# Add service authentication middleware
+app.add_middleware(ServiceAuthMiddleware, protected_paths=["/internal/"])
+
 
 # Global exception handler
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """
-    Global exception handler
+    Global exception handler - prevents sensitive information leakage
     """
-    logger.error(f"Unhandled exception: {exc}", exc_info=True)
+    # Log detailed error internally
+    logger.error(f"Unhandled exception on {request.method} {request.url}: {exc}", exc_info=True)
+    
+    # Return generic error message to client
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={"detail": "Internal server error"}
+        content={"detail": "Internal server error. Please contact support if this persists."}
     )
 
 
@@ -127,6 +134,7 @@ async def health_check():
 # Include routers
 app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
 app.include_router(iam_adapter.router, tags=["IAM Adapter"])
+app.include_router(internal.router, tags=["Internal API"])
 
 
 # Custom OpenAPI schema

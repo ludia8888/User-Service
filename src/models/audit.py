@@ -1,22 +1,8 @@
 """
-Audit event model
+Audit event model - DEPRECATED
+This model is deprecated as audit events are now handled by the centralized Audit Service.
+This file will be removed after migration is complete.
 """
-from datetime import datetime, timezone
-from sqlalchemy import Column, String, DateTime, JSON, Integer
-from sqlalchemy.ext.declarative import declarative_base
-
-Base = declarative_base()
-
-
-class AuditEvent(Base):
-    """Audit event model"""
-    __tablename__ = "audit_events"
-    
-    id = Column(Integer, primary_key=True)
-    event_type = Column(String(50), nullable=False, index=True)
-    user_id = Column(String(36), index=True)
-    username = Column(String(100), index=True)
-    ip_address = Column(String(45))
-    user_agent = Column(String(500))
-    details = Column(JSON)
-    timestamp = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+# DEPRECATED: AuditEvent model has been removed
+# All audit functionality has been migrated to the centralized Audit Service
+# Use services.audit_service.AuditService client instead

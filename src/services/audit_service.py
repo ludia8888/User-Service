@@ -1,6 +1,6 @@
 """
-Audit Logging Service
-Logs security-related events for compliance and monitoring
+Audit Service Client
+Sends audit events to centralized Audit Service
 """
 import json
 import logging
@@ -8,11 +8,11 @@ from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 from enum import Enum
 
+import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.redis import get_redis_client
 from core.config import settings
-from models.audit import AuditEvent
 
 
 class AuditEventType(str, Enum):
@@ -53,15 +53,15 @@ class AuditEventType(str, Enum):
     INVALID_TOKEN = "invalid_token"
 
 
-
-
 class AuditService:
-    """Service for managing audit logs"""
+    """Client for sending audit events to centralized Audit Service"""
     
-    def __init__(self, db: AsyncSession):
-        self.db = db
+    def __init__(self, db: AsyncSession = None):
+        self.db = db  # Deprecated, will be removed after migration
         self.logger = logging.getLogger("audit")
         self._setup_logger()
+        self.audit_service_url = settings.AUDIT_SERVICE_URL
+        self.http_client = httpx.AsyncClient(timeout=2.0)
     
     def _setup_logger(self):
         """Setup structured logging for audit events"""
@@ -85,33 +85,36 @@ class AuditService:
         details: Optional[Dict[str, Any]] = None,
         success: bool = True
     ):
-        """Log an audit event"""
+        """Send audit event to centralized Audit Service"""
         try:
-            # Create audit event
-            event = AuditEvent(
-                event_type=event_type,
-                user_id=user_id,
-                username=username,
-                ip_address=ip_address,
-                user_agent=user_agent,
-                details=details or {},
-                timestamp=datetime.now(timezone.utc)
-            )
+            # Prepare event data for Audit Service API
+            event_data = {
+                "event_type": f"auth.{event_type.value}",
+                "user_id": user_id,
+                "username": username,
+                "ip_address": ip_address,
+                "user_agent": user_agent,
+                "service": "user-service",
+                "action": event_type.value,
+                "result": "success" if success else "failure",
+                "details": details or {},
+                "compliance_tags": ["SOX", "GDPR"],
+                "data_classification": "internal"
+            }
             
-            # Store in database
-            self.db.add(event)
-            await self.db.commit()
+            # Send to Audit Service
+            await self._send_to_audit_service(event_data)
             
-            # Log to structured logger
+            # Log locally for immediate visibility
             log_data = {
-                "event_type": event_type,
+                "event_type": event_type.value,
                 "user_id": user_id,
                 "username": username,
                 "ip_address": ip_address,
                 "user_agent": user_agent,
                 "details": details,
                 "success": success,
-                "timestamp": event.timestamp.isoformat()
+                "timestamp": datetime.now(timezone.utc).isoformat()
             }
             
             if success:
@@ -119,29 +122,58 @@ class AuditService:
             else:
                 self.logger.warning(json.dumps(log_data))
             
-            # Store in Redis for real-time monitoring
-            await self._store_in_redis(event_type, log_data)
-            
         except Exception as e:
-            self.logger.error(f"Failed to log audit event: {e}")
+            self.logger.error(f"Failed to send audit event: {e}")
+            # Fallback to Redis queue for retry
+            await self._queue_for_retry(event_type, user_id, username, ip_address, user_agent, details, success)
     
-    async def _store_in_redis(self, event_type: str, data: dict):
-        """Store event in Redis for real-time monitoring"""
+    async def _send_to_audit_service(self, event_data: dict):
+        """Send event to centralized Audit Service"""
+        try:
+            response = await self.http_client.post(
+                f"{self.audit_service_url}/api/v2/events",
+                json=event_data
+            )
+            response.raise_for_status()
+            
+        except httpx.RequestError as e:
+            self.logger.error(f"Failed to send audit event to service: {e}")
+            raise
+        except httpx.HTTPStatusError as e:
+            self.logger.error(f"Audit service returned error: {e}")
+            raise
+    
+    async def _queue_for_retry(self, event_type: AuditEventType, user_id: str, username: str, ip_address: str, user_agent: str, details: dict, success: bool):
+        """Queue failed events for retry"""
         try:
             redis_client = get_redis_client()
-            key = f"{settings.REDIS_PREFIX}:audit:{event_type}"
+            retry_data = {
+                "event_type": event_type.value,
+                "user_id": user_id,
+                "username": username,
+                "ip_address": ip_address,
+                "user_agent": user_agent,
+                "details": details,
+                "success": success,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "retry_count": 0
+            }
             
-            # Add to sorted set with timestamp as score
-            await redis_client.zadd(
-                key,
-                {json.dumps(data): datetime.now().timestamp()}
+            # Add to retry queue
+            await redis_client.lpush(
+                f"{settings.REDIS_PREFIX}:audit:retry_queue",
+                json.dumps(retry_data)
             )
             
-            # Expire old events
-            await redis_client.expire(key, 86400)  # 24 hours
+            # Expire after 7 days
+            await redis_client.expire(f"{settings.REDIS_PREFIX}:audit:retry_queue", 604800)
             
         except Exception as e:
-            self.logger.error(f"Failed to store audit event in Redis: {e}")
+            self.logger.error(f"Failed to queue audit event for retry: {e}")
+    
+    async def close(self):
+        """Close HTTP client"""
+        await self.http_client.aclose()
     
     # Convenience methods for common events
     

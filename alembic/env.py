@@ -20,15 +20,10 @@ if config.config_file_name is not None:
 # add your model's MetaData object here
 # for 'autogenerate' support
 from models.user import Base as UserBase
-from models.audit import Base as AuditBase
-from sqlalchemy import MetaData
+# Note: AuditBase removed as audit functionality migrated to Audit Service
 
-# Combine metadata from both models
-target_metadata = MetaData()
-for table in UserBase.metadata.tables.values():
-    table.to_metadata(target_metadata)
-for table in AuditBase.metadata.tables.values():
-    table.to_metadata(target_metadata)
+# Use UserBase metadata only
+target_metadata = UserBase.metadata
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:

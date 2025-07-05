@@ -95,7 +95,8 @@ class Settings(BaseSettings):
     RATE_LIMIT_ENABLED: bool = True
     RATE_LIMIT_PER_MINUTE: int = 60
     
-    # Audit
+    # Audit Service
+    AUDIT_SERVICE_URL: str = "http://audit-service:8001"
     AUDIT_LOG_RETENTION_DAYS: int = 90
     
     class Config:

@@ -1,0 +1,91 @@
+version: '3.8'
+
+services:
+  user-service:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      # Database
+      DATABASE_URL: "postgresql+asyncpg://user_service:${DB_PASSWORD}@user-db:5432/user_service"
+      
+      # Redis
+      REDIS_URL: "redis://redis:6379"
+      REDIS_PREFIX: "user-service"
+      
+      # Security (SET THESE IN PRODUCTION!)
+      JWT_SECRET: "${JWT_SECRET}"
+      DEBUG: "false"
+      
+      # Audit Service
+      AUDIT_SERVICE_URL: "http://audit-service:8001"
+      
+      # CORS (Configure for your domain)
+      CORS_ORIGINS: '["https://yourapp.com", "https://admin.yourapp.com"]'
+      CORS_ALLOW_ALL_ORIGINS: "false"
+      
+      # Rate Limiting
+      RATE_LIMIT_ENABLED: "true"
+      RATE_LIMIT_PER_MINUTE: "60"
+      
+      # Session Security
+      ACCESS_TOKEN_EXPIRE_MINUTES: "15"
+      REFRESH_TOKEN_EXPIRE_DAYS: "30"
+      SESSION_TIMEOUT_MINUTES: "30"
+      MAX_CONCURRENT_SESSIONS: "5"
+      
+    depends_on:
+      - user-db
+      - redis
+      - audit-service
+    networks:
+      - user-network
+    restart: unless-stopped
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+
+  user-db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: user_service
+      POSTGRES_USER: user_service
+      POSTGRES_PASSWORD: "${DB_PASSWORD}"
+    volumes:
+      - user_db_data:/var/lib/postgresql/data
+    networks:
+      - user-network
+    restart: unless-stopped
+    
+    # Security configurations
+    command: >
+      postgres
+      -c ssl=on
+      -c ssl_cert_file=/etc/ssl/certs/ssl-cert-snakeoil.pem
+      -c ssl_key_file=/etc/ssl/private/ssl-cert-snakeoil.key
+      -c log_statement=all
+      -c log_min_duration_statement=0
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --requirepass "${REDIS_PASSWORD}"
+    volumes:
+      - redis_data:/data
+    networks:
+      - user-network
+    restart: unless-stopped
+
+volumes:
+  user_db_data:
+  redis_data:
+
+networks:
+  user-network:
+    driver: bridge
