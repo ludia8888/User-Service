@@ -14,19 +14,6 @@ EMAIL_REGEX = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
 PASSWORD_SPECIAL_CHARS = re.compile(r"[!@#$%^&*(),.?\":{}|<>]")
 
 
-class UsernameStr(constr):
-    """Username string type with validation"""
-    min_length = 3
-    max_length = 32
-    regex = USERNAME_REGEX
-
-
-class PasswordStr(constr):
-    """Password string type"""
-    min_length = settings.PASSWORD_MIN_LENGTH
-    max_length = 128
-
-
 def validate_username(username: str) -> str:
     """
     Validate username format

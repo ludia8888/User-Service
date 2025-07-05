@@ -9,12 +9,16 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 
-from src.main import app
-from src.core.config import settings
-from src.models.user import Base, User
-from src.services.auth_service import AuthService
-from src.services.user_service import UserService
-from src.core.validators import validate_password
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
+
+from main import app
+from core.config import settings
+from models.user import Base, User
+from services.auth_service import AuthService
+from services.user_service import UserService
+from core.validators import validate_password
 
 
 # Test database URL

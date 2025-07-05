@@ -1,6 +1,7 @@
 """
 Configuration settings
 """
+import os
 from typing import List, Optional
 from pydantic_settings import BaseSettings
 from pydantic import field_validator
@@ -33,10 +34,13 @@ class Settings(BaseSettings):
     
     @field_validator('JWT_SECRET')
     @classmethod
-    def validate_jwt_secret(cls, v: str) -> str:
+    def validate_jwt_secret(cls, v: str, values) -> str:
         """Validate JWT secret is secure"""
+        # Check if DEBUG mode is enabled
+        is_debug = values.data.get('DEBUG', False) if hasattr(values, 'data') else os.getenv('DEBUG', 'false').lower() == 'true'
+        
         if v.startswith("your-super-secret"):
-            if not cls.model_fields.get('DEBUG') or not cls.model_fields['DEBUG'].default:
+            if not is_debug:
                 raise ValueError(
                     "JWT_SECRET must be changed from default value in production! "
                     "Generate a secure secret with: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
@@ -48,7 +52,8 @@ class Settings(BaseSettings):
                     RuntimeWarning
                 )
         elif len(v) < 32:
-            raise ValueError("JWT_SECRET must be at least 32 characters long")
+            if not is_debug:
+                raise ValueError("JWT_SECRET must be at least 32 characters long")
         return v
     
     # Security
