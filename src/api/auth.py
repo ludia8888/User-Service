@@ -1,8 +1,9 @@
 """
 Authentication API endpoints
 """
+import base64
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
@@ -18,6 +19,8 @@ from core.validators import (
 )
 from services.auth_service import AuthService
 from services.user_service import UserService
+from services.mfa_service import MFAService
+from services.audit_service import AuditService
 
 router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
@@ -123,6 +126,7 @@ async def register(
     Register a new user
     """
     user_service = UserService(db)
+    audit_service = AuditService(db)
     
     # Check if user already exists
     existing_user = await user_service.get_user_by_username(register_request.username)
@@ -158,6 +162,15 @@ async def register(
         ]
         user.teams = ["users"]
         await db.commit()
+        
+        # Log user creation
+        await audit_service.log_user_created(
+            user_id=str(user.id),
+            username=user.username,
+            email=user.email,
+            created_by="self-registration",
+            roles=user.roles
+        )
         
         return RegisterResponse(
             user=UserInfoResponse(
@@ -195,9 +208,10 @@ async def login(
     """
     auth_service = AuthService(db)
     user_service = UserService(db)
+    audit_service = AuditService(db)
     
     # Get client info
-    client_ip = request.client.host
+    client_ip = request.client.host if request.client else "unknown"
     user_agent = request.headers.get("user-agent", "")
     
     try:
@@ -217,6 +231,14 @@ async def login(
         # Update last login
         await user_service.update_last_login(user.id)
         
+        # Log successful login
+        await audit_service.log_login_success(
+            user_id=user.id,
+            username=user.username,
+            ip_address=client_ip,
+            user_agent=user_agent
+        )
+        
         return LoginResponse(
             access_token=access_token,
             refresh_token=refresh_token,
@@ -224,6 +246,14 @@ async def login(
         )
         
     except ValueError as e:
+        # Log failed login
+        await audit_service.log_login_failed(
+            username=form_data.username,
+            ip_address=client_ip,
+            user_agent=user_agent,
+            reason=str(e)
+        )
+        
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=str(e),
@@ -243,6 +273,7 @@ async def logout(
     - Clears session cache
     """
     auth_service = AuthService(db)
+    audit_service = AuditService(db)
     
     try:
         # Extract user info from token
@@ -252,6 +283,15 @@ async def logout(
         
         if user_id and session_id:
             await auth_service.revoke_session(session_id, user_id)
+            
+            # Get user info for audit log
+            user = await auth_service.get_user_by_id(user_id)
+            if user:
+                await audit_service.log_logout(
+                    user_id=user_id,
+                    username=user.username,
+                    session_id=session_id
+                )
         
         return {"message": "Successfully logged out"}
         
@@ -345,6 +385,300 @@ async def get_user_info(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token",
             headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
+# MFA Endpoints
+
+class MFASetupResponse(BaseModel):
+    secret: str
+    qr_code: str
+    backup_codes: Optional[List[str]] = None
+
+
+class MFAEnableRequest(BaseModel):
+    code: constr(min_length=6, max_length=6)
+    
+    @field_validator('code')
+    @classmethod
+    def validate_code(cls, v):
+        if not v.isdigit():
+            raise ValueError("MFA code must be 6 digits")
+        return v
+
+
+class MFADisableRequest(BaseModel):
+    password: constr(min_length=1, max_length=255)
+    code: constr(min_length=6, max_length=6)
+
+
+@router.post("/mfa/setup")
+async def setup_mfa(
+    token: str = Depends(oauth2_scheme),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Setup MFA for authenticated user
+    
+    Returns secret and QR code for authenticator app
+    """
+    auth_service = AuthService(db)
+    mfa_service = MFAService(db)
+    
+    try:
+        # Get user from token
+        payload = auth_service.decode_token(token)
+        user_id = payload.get("sub")
+        user = await auth_service.get_user_by_id(user_id)
+        
+        if not user:
+            raise ValueError("User not found")
+        
+        if user.mfa_enabled:
+            raise ValueError("MFA already enabled")
+        
+        # Generate MFA secret
+        secret, provisioning_uri = await mfa_service.generate_mfa_secret(user)
+        
+        # Generate QR code
+        qr_code_bytes = mfa_service.generate_qr_code(provisioning_uri)
+        qr_code_base64 = base64.b64encode(qr_code_bytes).decode()
+        
+        return MFASetupResponse(
+            secret=secret,
+            qr_code=f"data:image/png;base64,{qr_code_base64}"
+        )
+        
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to setup MFA"
+        )
+
+
+@router.post("/mfa/enable")
+async def enable_mfa(
+    request: MFAEnableRequest,
+    token: str = Depends(oauth2_scheme),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Enable MFA after verifying initial code
+    
+    Returns backup codes
+    """
+    auth_service = AuthService(db)
+    mfa_service = MFAService(db)
+    audit_service = AuditService(db)
+    
+    try:
+        # Get user from token
+        payload = auth_service.decode_token(token)
+        user_id = payload.get("sub")
+        user = await auth_service.get_user_by_id(user_id)
+        
+        if not user:
+            raise ValueError("User not found")
+        
+        # Enable MFA
+        backup_codes = await mfa_service.enable_mfa(user, request.code)
+        
+        # Log MFA enablement
+        await audit_service.log_mfa_enabled(
+            user_id=user.id,
+            username=user.username
+        )
+        
+        return {
+            "message": "MFA enabled successfully",
+            "backup_codes": backup_codes
+        }
+        
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to enable MFA"
+        )
+
+
+@router.post("/mfa/disable")
+async def disable_mfa(
+    request: MFADisableRequest,
+    token: str = Depends(oauth2_scheme),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Disable MFA for user
+    
+    Requires password and current MFA code
+    """
+    auth_service = AuthService(db)
+    mfa_service = MFAService(db)
+    audit_service = AuditService(db)
+    
+    try:
+        # Get user from token
+        payload = auth_service.decode_token(token)
+        user_id = payload.get("sub")
+        user = await auth_service.get_user_by_id(user_id)
+        
+        if not user:
+            raise ValueError("User not found")
+        
+        if not user.mfa_enabled:
+            raise ValueError("MFA not enabled")
+        
+        # Verify password
+        if not auth_service.verify_password(request.password, user.password_hash):
+            raise ValueError("Invalid password")
+        
+        # Verify MFA code
+        if not await mfa_service.verify_totp(user, request.code):
+            raise ValueError("Invalid MFA code")
+        
+        # Disable MFA
+        await mfa_service.disable_mfa(user, request.password)
+        
+        # Log MFA disablement
+        await audit_service.log_mfa_disabled(
+            user_id=user.id,
+            username=user.username
+        )
+        
+        return {"message": "MFA disabled successfully"}
+        
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to disable MFA"
+        )
+
+
+@router.post("/mfa/regenerate-backup-codes")
+async def regenerate_backup_codes(
+    token: str = Depends(oauth2_scheme),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Regenerate backup codes for MFA
+    """
+    auth_service = AuthService(db)
+    mfa_service = MFAService(db)
+    
+    try:
+        # Get user from token
+        payload = auth_service.decode_token(token)
+        user_id = payload.get("sub")
+        user = await auth_service.get_user_by_id(user_id)
+        
+        if not user:
+            raise ValueError("User not found")
+        
+        if not user.mfa_enabled:
+            raise ValueError("MFA not enabled")
+        
+        # Regenerate codes
+        backup_codes = await mfa_service.regenerate_backup_codes(user)
+        
+        return {
+            "message": "Backup codes regenerated successfully",
+            "backup_codes": backup_codes
+        }
+        
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to regenerate backup codes"
+        )
+
+
+# Password Management Endpoints
+
+class PasswordChangeRequest(BaseModel):
+    old_password: constr(min_length=1, max_length=255)
+    new_password: constr(min_length=8, max_length=128)
+    
+    @field_validator('new_password')
+    @classmethod
+    def validate_new_password(cls, v):
+        return validate_password(v)
+
+
+@router.post("/change-password")
+async def change_password(
+    request: Request,
+    password_request: PasswordChangeRequest,
+    token: str = Depends(oauth2_scheme),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Change user password
+    
+    Validates:
+    - Old password is correct
+    - New password meets policy requirements
+    - New password not in history
+    """
+    auth_service = AuthService(db)
+    user_service = UserService(db)
+    audit_service = AuditService(db)
+    
+    try:
+        # Get user from token
+        payload = auth_service.decode_token(token)
+        user_id = payload.get("sub")
+        
+        if not user_id:
+            raise ValueError("Invalid token")
+        
+        # Change password
+        user = await user_service.change_password(
+            user_id=user_id,
+            old_password=password_request.old_password,
+            new_password=password_request.new_password,
+            changed_by=user_id
+        )
+        
+        # Log password change
+        client_ip = request.client.host if request.client else "unknown"
+        await audit_service.log_password_changed(
+            user_id=user_id,
+            username=user.username,
+            changed_by=user_id,
+            ip_address=client_ip
+        )
+        
+        return {"message": "Password changed successfully"}
+        
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to change password"
         )
 
 

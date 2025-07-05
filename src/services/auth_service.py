@@ -55,6 +55,17 @@ class AuthService:
         if user.status != UserStatus.ACTIVE:
             raise ValueError("Account is not active")
         
+        # Verify MFA if enabled
+        if user.mfa_enabled:
+            if not mfa_code:
+                raise ValueError("MFA code required")
+            
+            from services.mfa_service import MFAService
+            mfa_service = MFAService(self.db)
+            
+            if not await mfa_service.verify_mfa(user, mfa_code):
+                raise ValueError("Invalid MFA code")
+        
         return user
     
     def create_access_token(self, user: User) -> str:

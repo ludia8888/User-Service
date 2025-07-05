@@ -12,6 +12,7 @@ from passlib.context import CryptContext
 
 from models.user import User, UserStatus
 from core.config import settings
+from core.validators import validate_password
 # from .audit_event_publisher import AuditEventPublisher
 
 # Password hashing - Use bcrypt as default for compatibility
@@ -52,9 +53,11 @@ class UserService:
         if existing.scalar_one_or_none():
             raise ValueError("User already exists")
         
-        # Validate password
-        if not self._validate_password(password):
-            raise ValueError("Password does not meet requirements")
+        # Validate password using the comprehensive validator
+        try:
+            validate_password(password)
+        except ValueError as e:
+            raise ValueError(f"Password validation failed: {str(e)}")
         
         # Hash password
         password_hash = pwd_context.hash(password)
@@ -168,9 +171,11 @@ class UserService:
             # )
             raise ValueError("Invalid old password")
         
-        # Validate new password
-        if not self._validate_password(new_password):
-            raise ValueError("Password does not meet requirements")
+        # Validate new password using the comprehensive validator
+        try:
+            validate_password(new_password)
+        except ValueError as e:
+            raise ValueError(f"Password validation failed: {str(e)}")
         
         # Check password history
         new_hash = pwd_context.hash(new_password)
