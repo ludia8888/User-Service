@@ -21,8 +21,7 @@ import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from main import app
-from models.user import Base as UserBase
-from models.audit import Base as AuditBase
+from models.user import Base
 from core.database import get_db
 
 
@@ -50,35 +49,29 @@ async def engine():
 async def setup_database(engine):
     """Create all database tables"""
     async with engine.begin() as conn:
-        # Drop all tables
-        await conn.run_sync(UserBase.metadata.drop_all)
-        await conn.run_sync(AuditBase.metadata.drop_all)
-        # Create all tables
-        await conn.run_sync(UserBase.metadata.create_all)
-        await conn.run_sync(AuditBase.metadata.create_all)
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
     yield
     async with engine.begin() as conn:
-        await conn.run_sync(UserBase.metadata.drop_all)
-        await conn.run_sync(AuditBase.metadata.drop_all)
+        await conn.run_sync(Base.metadata.drop_all)
 
 
 @pytest.fixture
-async def db_session(engine, setup_database):
+async def db_session(engine, setup_database) -> AsyncGenerator[AsyncSession, None]:
     """Create a test database session"""
     async_session_maker = async_sessionmaker(
         engine, class_=AsyncSession, expire_on_commit=False
     )
     
     async with async_session_maker() as session:
-        async with session.begin():
-            yield session
-            # Rollback will happen automatically when context exits
+        yield session
+        await session.rollback()
 
 
 @pytest.fixture
-async def client(db_session):
+async def client(db_session) -> AsyncGenerator[AsyncClient, None]:
     """Create test client with database override"""
-    async def override_get_db():
+    def override_get_db():
         yield db_session
     
     app.dependency_overrides[get_db] = override_get_db
@@ -90,7 +83,7 @@ async def client(db_session):
 
 
 @pytest.fixture
-def test_user_data():
+async def test_user_data():
     """Test user data"""
     return {
         "username": "testuser",
@@ -104,21 +97,6 @@ def test_user_data():
 async def registered_user(client, test_user_data):
     """Create a registered user"""
     response = await client.post("/auth/register", json=test_user_data)
-    # If user already exists, that's OK for tests
-    if response.status_code == 400 and "already exists" in response.text:
-        # Return a mock response that matches expected format
-        return {
-            "user": {
-                "user_id": "test-user-id",
-                "username": test_user_data["username"],
-                "email": test_user_data["email"],
-                "full_name": test_user_data["full_name"],
-                "roles": ["user"],
-                "permissions": ["ontology:read:*", "schema:read:*", "branch:read:*"],
-                "teams": ["users"],
-                "mfa_enabled": False
-            }
-        }
     assert response.status_code == 200
     return response.json()
 

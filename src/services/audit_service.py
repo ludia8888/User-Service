@@ -9,14 +9,10 @@ from typing import Optional, Dict, Any
 from enum import Enum
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import Column, String, DateTime, JSON, Integer
-from sqlalchemy.ext.declarative import declarative_base
 
 from core.redis import get_redis_client
 from core.config import settings
-
-
-Base = declarative_base()
+from models.audit import AuditEvent
 
 
 class AuditEventType(str, Enum):
@@ -57,18 +53,6 @@ class AuditEventType(str, Enum):
     INVALID_TOKEN = "invalid_token"
 
 
-class AuditEvent(Base):
-    """Audit event model"""
-    __tablename__ = "audit_events"
-    
-    id = Column(Integer, primary_key=True)
-    event_type = Column(String(50), nullable=False, index=True)
-    user_id = Column(String(36), index=True)
-    username = Column(String(100), index=True)
-    ip_address = Column(String(45))
-    user_agent = Column(String(500))
-    details = Column(JSON)
-    timestamp = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
 
 
 class AuditService:

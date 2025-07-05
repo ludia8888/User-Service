@@ -2,9 +2,12 @@
 Rate limiting implementation using Redis
 """
 import time
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Callable
+from functools import wraps
 from fastapi import HTTPException, Request, status
 from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response
 
 from .redis import get_redis_client
 from .config import settings
@@ -144,6 +147,7 @@ def rate_limit(requests: int = 10, window: int = 60, key_func: Optional[callable
     def decorator(func):
         limiter = RateLimiter(requests=requests, window=window, prefix="endpoint")
         
+        @wraps(func)
         async def wrapper(*args, **kwargs):
             # Find Request object in args/kwargs
             request = None
@@ -188,9 +192,52 @@ def rate_limit(requests: int = 10, window: int = 60, key_func: Optional[callable
             
             return response
         
-        # Copy function metadata
-        wrapper.__name__ = func.__name__
-        wrapper.__doc__ = func.__doc__
-        
         return wrapper
     return decorator
+
+
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    """
+    Global rate limiting middleware
+    """
+    
+    def __init__(self, app):
+        super().__init__(app)
+        self.limiter = RateLimiter(
+            requests=settings.RATE_LIMIT_PER_MINUTE,
+            window=60  # 1 minute window
+        )
+    
+    async def dispatch(self, request: Request, call_next) -> Response:
+        """
+        Apply rate limiting to all requests
+        """
+        if not settings.RATE_LIMIT_ENABLED:
+            return await call_next(request)
+        
+        # Skip rate limiting for health checks and docs
+        if request.url.path in ["/health", "/docs", "/openapi.json", "/redoc"]:
+            return await call_next(request)
+        
+        # Generate key based on client IP
+        client_ip = request.client.host if request.client else "unknown"
+        key = f"global:{client_ip}"
+        
+        # Check rate limit
+        allowed, headers = await self.limiter.check_rate_limit(key)
+        
+        if not allowed:
+            return JSONResponse(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                content={"detail": "Rate limit exceeded"},
+                headers=headers
+            )
+        
+        # Process request
+        response = await call_next(request)
+        
+        # Add rate limit headers to response
+        for header, value in headers.items():
+            response.headers[header] = value
+        
+        return response

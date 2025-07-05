@@ -1,21 +1,21 @@
 """
 Security headers middleware
 """
-from typing import Callable
-from fastapi import Request, Response
-from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
 
 
-class SecurityHeadersMiddleware:
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """
     Middleware to add security headers to all responses
     """
     
     def __init__(self, app, *, strict: bool = True):
-        self.app = app
+        super().__init__(app)
         self.strict = strict
     
-    async def __call__(self, request: Request, call_next: Callable) -> Response:
+    async def dispatch(self, request: Request, call_next) -> Response:
         """
         Add security headers to response
         """
@@ -28,7 +28,8 @@ class SecurityHeadersMiddleware:
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         
         # Remove server header
-        response.headers.pop("Server", None)
+        if "Server" in response.headers:
+            del response.headers["Server"]
         
         # Strict Transport Security (HSTS) - only on HTTPS
         if request.url.scheme == "https" or self.strict:
@@ -48,18 +49,24 @@ class SecurityHeadersMiddleware:
             "base-uri 'self'",
             "form-action 'self'"
         ]
+        
+        if not self.strict:
+            # Less restrictive CSP for development
+            csp_directives[1] = "script-src 'self' 'unsafe-inline' 'unsafe-eval' http: https:"
+            csp_directives[3] = "connect-src 'self' http: https: ws: wss:"
+        
         response.headers["Content-Security-Policy"] = "; ".join(csp_directives)
         
         # Permissions Policy (formerly Feature Policy)
         permissions = [
-            "accelerometer=()",
-            "camera=()",
             "geolocation=()",
-            "gyroscope=()",
-            "magnetometer=()",
             "microphone=()",
+            "camera=()",
             "payment=()",
-            "usb=()"
+            "usb=()",
+            "magnetometer=()",
+            "accelerometer=()",
+            "gyroscope=()"
         ]
         response.headers["Permissions-Policy"] = ", ".join(permissions)
         

@@ -357,6 +357,17 @@ async def refresh_token_iam(
         )
 
 
+@router.post("/iam/validate-token", response_model=TokenValidationResponse)
+async def validate_token_iam(
+    request: TokenValidationRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    IAM-compatible token validation endpoint
+    """
+    return await validate_token(request, db)
+
+
 @router.get("/health", response_model=IAMHealthResponse)
 async def health_check():
     """
