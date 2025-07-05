@@ -36,3 +36,25 @@ async def get_db():
             yield session
         finally:
             await session.close()
+
+
+async def init_db():
+    """Initialize database tables"""
+    async with engine.begin() as conn:
+        # Import models to ensure they are registered
+        from models import user  # noqa
+        
+        # Create all tables
+        await conn.run_sync(Base.metadata.create_all)
+
+
+async def test_connection():
+    """Test database connection"""
+    try:
+        async with engine.begin() as conn:
+            await conn.execute("SELECT 1")
+        print("Database connection successful")
+        return True
+    except Exception as e:
+        print(f"Database connection failed: {e}")
+        return False

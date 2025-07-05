@@ -122,3 +122,8 @@ class User(Base):
                 return False
         
         return True
+    
+    @property
+    def is_active(self) -> bool:
+        """Check if user is active"""
+        return self.status == UserStatus.ACTIVE

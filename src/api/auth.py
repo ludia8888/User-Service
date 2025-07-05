@@ -7,10 +7,15 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, field_validator, constr
 
 from core.database import get_db
 from core.config import settings
+from core.rate_limit import rate_limit
+from core.validators import (
+    validate_username, validate_email, validate_password,
+    validate_mfa_code, validate_full_name, sanitize_string
+)
 from services.auth_service import AuthService
 from services.user_service import UserService
 
@@ -19,9 +24,19 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 
 class LoginRequest(BaseModel):
-    username: str
-    password: str
+    username: constr(min_length=1, max_length=255)
+    password: constr(min_length=1, max_length=255)
     mfa_code: Optional[str] = None
+    
+    @field_validator('username')
+    @classmethod
+    def sanitize_username(cls, v):
+        return sanitize_string(v)
+    
+    @field_validator('mfa_code')
+    @classmethod
+    def validate_mfa(cls, v):
+        return validate_mfa_code(v)
 
 
 class LoginResponse(BaseModel):
@@ -32,7 +47,15 @@ class LoginResponse(BaseModel):
 
 
 class TokenRefreshRequest(BaseModel):
-    refresh_token: str
+    refresh_token: constr(min_length=1, max_length=2048)
+    
+    @field_validator('refresh_token')
+    @classmethod
+    def validate_token(cls, v):
+        v = v.strip()
+        if not v:
+            raise ValueError("Refresh token cannot be empty")
+        return v
 
 
 class UserInfoResponse(BaseModel):
@@ -46,7 +69,117 @@ class UserInfoResponse(BaseModel):
     mfa_enabled: bool
 
 
+class RegisterRequest(BaseModel):
+    username: constr(min_length=3, max_length=32)
+    email: EmailStr
+    password: constr(min_length=8, max_length=128)
+    full_name: Optional[constr(min_length=2, max_length=100)] = None
+    roles: Optional[list[str]] = ["user"]
+    
+    @field_validator('username')
+    @classmethod
+    def validate_username_field(cls, v):
+        return validate_username(v)
+    
+    @field_validator('email')
+    @classmethod
+    def validate_email_field(cls, v):
+        return validate_email(v)
+    
+    @field_validator('password')
+    @classmethod
+    def validate_password_field(cls, v):
+        return validate_password(v)
+    
+    @field_validator('full_name')
+    @classmethod
+    def validate_name_field(cls, v):
+        return validate_full_name(v)
+    
+    @field_validator('roles')
+    @classmethod
+    def validate_roles(cls, v):
+        if v:
+            allowed_roles = ["user", "admin", "operator"]
+            for role in v:
+                if role not in allowed_roles:
+                    raise ValueError(f"Invalid role: {role}")
+        return v
+
+
+class RegisterResponse(BaseModel):
+    user: UserInfoResponse
+    message: str = "User registered successfully"
+
+
+@router.post("/register", response_model=RegisterResponse)
+@rate_limit(requests=5, window=300)  # 5 registrations per 5 minutes
+async def register(
+    request: Request,
+    register_request: RegisterRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Register a new user
+    """
+    user_service = UserService(db)
+    
+    # Check if user already exists
+    existing_user = await user_service.get_user_by_username(register_request.username)
+    if existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Username already exists"
+        )
+    
+    existing_email = await user_service.get_user_by_email(register_request.email)
+    if existing_email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered"
+        )
+    
+    # Create new user
+    try:
+        user = await user_service.create_user(
+            username=register_request.username,
+            email=register_request.email,
+            password=register_request.password,
+            full_name=register_request.full_name,
+            roles=register_request.roles,
+            created_by="self-registration"
+        )
+        
+        # Set default permissions for new users
+        user.permissions = [
+            "ontology:read:*",
+            "schema:read:*",
+            "branch:read:*"
+        ]
+        user.teams = ["users"]
+        await db.commit()
+        
+        return RegisterResponse(
+            user=UserInfoResponse(
+                user_id=str(user.id),
+                username=user.username,
+                email=user.email,
+                full_name=user.full_name,
+                roles=user.roles,
+                permissions=user.permissions,
+                teams=user.teams,
+                mfa_enabled=user.mfa_enabled
+            )
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to register user: {str(e)}"
+        )
+
+
 @router.post("/login", response_model=LoginResponse)
+@rate_limit(requests=10, window=60)  # 10 login attempts per minute
 async def login(
     request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
@@ -128,8 +261,10 @@ async def logout(
 
 
 @router.post("/refresh", response_model=LoginResponse)
+@rate_limit(requests=30, window=60)  # 30 refresh attempts per minute
 async def refresh_token(
-    request: TokenRefreshRequest,
+    request: Request,
+    token_request: TokenRefreshRequest,
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -142,7 +277,7 @@ async def refresh_token(
     
     try:
         # Validate refresh token
-        payload = auth_service.decode_token(request.refresh_token)
+        payload = auth_service.decode_token(token_request.refresh_token)
         
         if payload.get("type") != "refresh":
             raise ValueError("Invalid token type")
@@ -158,7 +293,7 @@ async def refresh_token(
         
         return LoginResponse(
             access_token=access_token,
-            refresh_token=request.refresh_token,
+            refresh_token=token_request.refresh_token,
             expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
         )
         
