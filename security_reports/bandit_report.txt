@@ -1,0 +1,132 @@
+Run started:2025-07-05 19:09:58.953100
+
+Test results:
+>> Issue: [B106:hardcoded_password_funcarg] Possible hardcoded password: 'service-account-password'
+   Severity: Low   Confidence: Medium
+   CWE: CWE-259 (https://cwe.mitre.org/data/definitions/259.html)
+   More Info: https://bandit.readthedocs.io/en/1.8.5/plugins/b106_hardcoded_password_funcarg.html
+   Location: src/api/iam_adapter.py:498:29
+497	        
+498	        service_user = await user_service.create_user(
+499	            username=f"service-{service_id}",
+500	            email=f"{service_id}@system.local",
+501	            password="service-account-password",
+502	            full_name=f"Service Account: {service_id}",
+503	            roles=["service"],
+504	            created_by="system"
+505	        )
+506	        
+
+--------------------------------------------------
+>> Issue: [B104:hardcoded_bind_all_interfaces] Possible binding to all interfaces.
+   Severity: Medium   Confidence: Medium
+   CWE: CWE-605 (https://cwe.mitre.org/data/definitions/605.html)
+   More Info: https://bandit.readthedocs.io/en/1.8.5/plugins/b104_hardcoded_bind_all_interfaces.html
+   Location: src/main.py:166:13
+165	        "main:app",
+166	        host="0.0.0.0",
+167	        port=8000,
+
+--------------------------------------------------
+>> Issue: [B105:hardcoded_password_string] Possible hardcoded password: 'token_refresh'
+   Severity: Low   Confidence: Medium
+   CWE: CWE-259 (https://cwe.mitre.org/data/definitions/259.html)
+   More Info: https://bandit.readthedocs.io/en/1.8.5/plugins/b105_hardcoded_password_string.html
+   Location: src/services/audit_service.py:24:20
+23	    LOGOUT = "logout"
+24	    TOKEN_REFRESH = "token_refresh"
+25	    
+
+--------------------------------------------------
+>> Issue: [B105:hardcoded_password_string] Possible hardcoded password: 'password_changed'
+   Severity: Low   Confidence: Medium
+   CWE: CWE-259 (https://cwe.mitre.org/data/definitions/259.html)
+   More Info: https://bandit.readthedocs.io/en/1.8.5/plugins/b105_hardcoded_password_string.html
+   Location: src/services/audit_service.py:34:23
+33	    # Password events
+34	    PASSWORD_CHANGED = "password_changed"
+35	    PASSWORD_RESET_REQUESTED = "password_reset_requested"
+
+--------------------------------------------------
+>> Issue: [B105:hardcoded_password_string] Possible hardcoded password: 'password_reset_requested'
+   Severity: Low   Confidence: Medium
+   CWE: CWE-259 (https://cwe.mitre.org/data/definitions/259.html)
+   More Info: https://bandit.readthedocs.io/en/1.8.5/plugins/b105_hardcoded_password_string.html
+   Location: src/services/audit_service.py:35:31
+34	    PASSWORD_CHANGED = "password_changed"
+35	    PASSWORD_RESET_REQUESTED = "password_reset_requested"
+36	    PASSWORD_RESET_COMPLETED = "password_reset_completed"
+
+--------------------------------------------------
+>> Issue: [B105:hardcoded_password_string] Possible hardcoded password: 'password_reset_completed'
+   Severity: Low   Confidence: Medium
+   CWE: CWE-259 (https://cwe.mitre.org/data/definitions/259.html)
+   More Info: https://bandit.readthedocs.io/en/1.8.5/plugins/b105_hardcoded_password_string.html
+   Location: src/services/audit_service.py:36:31
+35	    PASSWORD_RESET_REQUESTED = "password_reset_requested"
+36	    PASSWORD_RESET_COMPLETED = "password_reset_completed"
+37	    
+
+--------------------------------------------------
+>> Issue: [B105:hardcoded_password_string] Possible hardcoded password: 'invalid_token'
+   Severity: Low   Confidence: Medium
+   CWE: CWE-259 (https://cwe.mitre.org/data/definitions/259.html)
+   More Info: https://bandit.readthedocs.io/en/1.8.5/plugins/b105_hardcoded_password_string.html
+   Location: src/services/audit_service.py:53:20
+52	    RATE_LIMIT_EXCEEDED = "rate_limit_exceeded"
+53	    INVALID_TOKEN = "invalid_token"
+54	
+
+--------------------------------------------------
+>> Issue: [B106:hardcoded_password_funcarg] Possible hardcoded password: 'Test123!'
+   Severity: Low   Confidence: Medium
+   CWE: CWE-259 (https://cwe.mitre.org/data/definitions/259.html)
+   More Info: https://bandit.readthedocs.io/en/1.8.5/plugins/b106_hardcoded_password_funcarg.html
+   Location: src/services/user_service.py:233:25
+232	        if not existing_user:
+233	            user = await self.create_user(
+234	                username="testuser",
+235	                email="test@example.com",
+236	                password="Test123!",
+237	                full_name="Test User",
+238	                roles=["admin"],
+239	                created_by="system"
+240	            )
+241	            
+
+--------------------------------------------------
+>> Issue: [B106:hardcoded_password_funcarg] Possible hardcoded password: 'Test123!'
+   Severity: Low   Confidence: Medium
+   CWE: CWE-259 (https://cwe.mitre.org/data/definitions/259.html)
+   More Info: https://bandit.readthedocs.io/en/1.8.5/plugins/b106_hardcoded_password_funcarg.html
+   Location: src/test_user_creation.py:27:25
+26	            user_service = UserService(db)
+27	            user = await user_service.create_user(
+28	                username="testuser",
+29	                email="test@example.com",
+30	                password="Test123!",
+31	                full_name="Test User",
+32	                roles=["admin"],
+33	                created_by="system"
+34	            )
+35	            
+
+--------------------------------------------------
+
+Code scanned:
+	Total lines of code: 2358
+	Total lines skipped (#nosec): 0
+	Total potential issues skipped due to specifically being disabled (e.g., #nosec BXXX): 0
+
+Run metrics:
+	Total issues (by severity):
+		Undefined: 0
+		Low: 8
+		Medium: 1
+		High: 0
+	Total issues (by confidence):
+		Undefined: 0
+		Low: 0
+		Medium: 9
+		High: 0
+Files skipped (0):

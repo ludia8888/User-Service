@@ -103,35 +103,31 @@ def test_user_data():
 @pytest.fixture
 async def registered_user(client, test_user_data):
     """Create a registered user"""
-    response = await client.post("/auth/register", json=test_user_data)
-    # If user already exists, that's OK for tests
-    if response.status_code == 400 and "already exists" in response.text:
-        # Return a mock response that matches expected format
-        return {
-            "user": {
-                "user_id": "test-user-id",
-                "username": test_user_data["username"],
-                "email": test_user_data["email"],
-                "full_name": test_user_data["full_name"],
-                "roles": ["user"],
-                "permissions": ["ontology:read:*", "schema:read:*", "branch:read:*"],
-                "teams": ["users"],
-                "mfa_enabled": False
-            }
-        }
+    # Use a unique username for each test
+    unique_user_data = test_user_data.copy()
+    import uuid
+    unique_user_data["username"] = f"testuser_{uuid.uuid4().hex[:8]}"
+    unique_user_data["email"] = f"test_{uuid.uuid4().hex[:8]}@example.com"
+    
+    response = await client.post("/auth/register", json=unique_user_data)
     assert response.status_code == 200
-    return response.json()
+    
+    result = response.json()
+    # Add the password to the result for login tests
+    result["password"] = unique_user_data["password"]
+    result["username"] = unique_user_data["username"]
+    return result
 
 
 @pytest.fixture
-async def auth_headers(client, test_user_data):
+async def auth_headers(client, registered_user):
     """Get authentication headers"""
-    # Login
+    # Login with the registered user
     response = await client.post(
         "/auth/login",
         data={
-            "username": test_user_data["username"],
-            "password": test_user_data["password"]
+            "username": registered_user["username"],
+            "password": registered_user["password"]
         }
     )
     assert response.status_code == 200
