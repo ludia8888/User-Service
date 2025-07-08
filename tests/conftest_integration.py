@@ -107,7 +107,7 @@ async def auth_headers(client, test_user_data):
     # Login
     response = await client.post(
         "/auth/login",
-        data={
+        json={
             "username": test_user_data["username"],
             "password": test_user_data["password"]
         }

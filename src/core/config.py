@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     PORT: int = 8000
     
     # Database
-    DATABASE_URL: str = "postgresql+asyncpg://user_service:password@user-db:5432/user_service"
+    DATABASE_URL: str
     DB_POOL_SIZE: int = 20
     DB_MAX_OVERFLOW: int = 10
     
@@ -27,8 +27,10 @@ class Settings(BaseSettings):
     REDIS_PREFIX: str = "user-service"
     
     # JWT
-    JWT_SECRET: str = "your-super-secret-key-change-in-production"
+    JWT_SECRET: str = "your_super_secret_key_for_user_service_with_32_chars"
     JWT_ALGORITHM: str = "HS256"
+    JWT_ISSUER: str = "user-service"
+    JWT_AUDIENCE: str = "user"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     
@@ -39,7 +41,7 @@ class Settings(BaseSettings):
         # Check if DEBUG mode is enabled
         is_debug = values.data.get('DEBUG', False) if hasattr(values, 'data') else os.getenv('DEBUG', 'false').lower() == 'true'
         
-        if v.startswith("your-super-secret"):
+        if v.startswith("your-super-secret") or v.startswith("your-development-secret") or v.startswith("your_super_secret"):
             if not is_debug:
                 raise ValueError(
                     "JWT_SECRET must be changed from default value in production! "
@@ -64,6 +66,7 @@ class Settings(BaseSettings):
     PASSWORD_REQUIRE_SPECIAL: bool = True
     PASSWORD_HISTORY_COUNT: int = 12
     PASSWORD_EXPIRE_DAYS: int = 90
+    PASSWORD_COMMON_PATTERNS: List[str] = ["password", "123456", "qwerty", "abc123"]
     
     # Account Security
     MAX_FAILED_LOGIN_ATTEMPTS: int = 5
@@ -98,6 +101,65 @@ class Settings(BaseSettings):
     # Audit Service
     AUDIT_SERVICE_URL: str = "http://audit-service:8001"
     AUDIT_LOG_RETENTION_DAYS: int = 90
+    
+    # Role-Based Access Control (RBAC)
+    DEFAULT_USER_ROLES: List[str] = ["user"]
+    ALLOWED_ROLES: List[str] = ["user", "admin", "operator", "viewer", "service"]
+    
+    # Default permissions for roles
+    DEFAULT_ROLE_PERMISSIONS: dict = {
+        "user": [
+            "ontology:read:*",
+            "schema:read:*",
+            "branch:read:*"
+        ],
+        "admin": [
+            "ontology:*:*",
+            "schema:*:*",
+            "branch:*:*",
+            "proposal:*:*",
+            "audit:*:read",
+            "system:*:admin"
+        ],
+        "operator": [
+            "ontology:read:*",
+            "ontology:write:*",
+            "schema:read:*",
+            "schema:write:*",
+            "branch:read:*",
+            "branch:write:*",
+            "proposal:read:*",
+            "proposal:write:*"
+        ],
+        "viewer": [
+            "ontology:read:*",
+            "schema:read:*",
+            "branch:read:*",
+            "proposal:read:*"
+        ],
+        "service": [
+            "ontology:*:*",
+            "schema:*:*",
+            "branch:*:*",
+            "proposal:*:*",
+            "audit:*:read",
+            "system:*:admin",
+            "service:*:account",
+            "webhook:*:execute"
+        ]
+    }
+    
+    # Default teams for roles
+    DEFAULT_ROLE_TEAMS: dict = {
+        "user": ["users"],
+        "admin": ["users", "admins"],
+        "operator": ["users", "operators"],
+        "viewer": ["users", "viewers"],
+        "service": ["system", "services"]
+    }
+    
+    # Default user role (for self-registration)
+    DEFAULT_NEW_USER_ROLE: str = "user"
     
     class Config:
         env_file = ".env"

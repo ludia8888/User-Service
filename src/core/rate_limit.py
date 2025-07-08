@@ -44,95 +44,76 @@ class RateLimiter:
         now = time.time()
         window_start = now - self.window
         
-        # Use Redis pipeline for atomic operations
-        pipe = redis_client.pipeline()
+        # Lua script for atomic rate limit check
+        # This script performs all operations atomically to prevent race conditions
+        lua_script = """
+        local key = KEYS[1]
+        local window_start = tonumber(ARGV[1])
+        local now = tonumber(ARGV[2])
+        local max_requests = tonumber(ARGV[3])
+        local window = tonumber(ARGV[4])
         
-        # Remove old entries outside the window
-        pipe.zremrangebyscore(redis_key, 0, window_start)
+        -- Remove old entries
+        redis.call('ZREMRANGEBYSCORE', key, 0, window_start)
         
-        # Count requests in current window
-        pipe.zcard(redis_key)
+        -- Get current count
+        local current_count = redis.call('ZCARD', key)
         
-        # Add current request
-        pipe.zadd(redis_key, {str(now): now})
+        -- Check if limit would be exceeded
+        if current_count >= max_requests then
+            return {0, current_count}  -- Not allowed
+        end
         
-        # Set expiry
-        pipe.expire(redis_key, self.window)
+        -- Add current request
+        redis.call('ZADD', key, now, tostring(now))
         
-        # Execute pipeline
-        results = await pipe.execute()
+        -- Set expiry
+        redis.call('EXPIRE', key, window)
         
-        # Get count (before adding current request)
-        count = results[1]
+        -- Return allowed with new count
+        return {1, current_count + 1}
+        """
+        
+        try:
+            # Execute Lua script atomically
+            result = await redis_client.eval(
+                lua_script,
+                1,  # Number of keys
+                redis_key,  # Key
+                window_start, now, self.requests, self.window  # Args
+            )
+            
+            allowed = result[0] == 1
+            count = result[1]
+            
+        except Exception as e:
+            # If Redis operation fails, deny the request for security (fail-closed)
+            # Log the error at CRITICAL level
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.critical(f"Rate limit check failed - denying request: {e}")
+            
+            # Return rate limit exceeded to be safe
+            headers = {
+                "X-RateLimit-Limit": str(self.requests),
+                "X-RateLimit-Remaining": "0",
+                "X-RateLimit-Reset": str(int(now + self.window)),
+                "Retry-After": str(self.window)
+            }
+            return False, headers
         
         # Calculate rate limit headers
         headers = {
             "X-RateLimit-Limit": str(self.requests),
-            "X-RateLimit-Remaining": str(max(0, self.requests - count - 1)),
+            "X-RateLimit-Remaining": str(max(0, self.requests - count)),
             "X-RateLimit-Reset": str(int(now + self.window))
         }
         
-        # Check if limit exceeded
-        if count >= self.requests:
+        # Add Retry-After header if limit exceeded
+        if not allowed:
             headers["Retry-After"] = str(self.window)
-            return False, headers
         
-        return True, headers
-
-
-class RateLimitMiddleware:
-    """
-    Middleware for rate limiting requests
-    """
-    
-    def __init__(self, app):
-        self.app = app
-        self.limiter = RateLimiter(
-            requests=settings.RATE_LIMIT_PER_MINUTE,
-            window=60
-        )
-    
-    async def __call__(self, request: Request, call_next):
-        """
-        Check rate limit for request
-        """
-        if not settings.RATE_LIMIT_ENABLED:
-            return await call_next(request)
-        
-        # Skip rate limiting for health check and docs
-        if request.url.path in ["/health", "/docs", "/redoc", "/openapi.json"]:
-            return await call_next(request)
-        
-        # Generate rate limit key based on IP
-        client_ip = request.client.host if request.client else "unknown"
-        key = f"ip:{client_ip}"
-        
-        # Check rate limit
-        try:
-            allowed, headers = await self.limiter.check_rate_limit(key)
-            
-            if not allowed:
-                return JSONResponse(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    content={"detail": "Rate limit exceeded"},
-                    headers=headers
-                )
-            
-            # Process request
-            response = await call_next(request)
-            
-            # Add rate limit headers to response
-            for header, value in headers.items():
-                response.headers[header] = value
-            
-            return response
-            
-        except Exception as e:
-            # If Redis is down, allow the request but log the error
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.error(f"Rate limit check failed: {e}")
-            return await call_next(request)
+        return allowed, headers
 
 
 def rate_limit(requests: int = 10, window: int = 60, key_func: Optional[callable] = None):

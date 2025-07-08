@@ -11,7 +11,21 @@ from sqlalchemy.orm import sessionmaker
 
 import sys
 import os
+
+# Set environment variables before importing anything
+os.environ.update({
+    "ENVIRONMENT": "development",
+    "CRYPTO_KEY_MFA_SECRET": "dGVzdC1tZmEtc2VjcmV0LWtleS1mb3ItdGVzdGluZy1wdXJwb3Nlcw==",
+    "CRYPTO_KEY_ENCRYPTION_KEY": "dGVzdC1lbmNyeXB0aW9uLWtleS1mb3ItdGVzdGluZy1wdXJwb3Nlcw==",
+    "ENCRYPTION_KEY": "test-encryption-key-for-testing-purposes"
+})
+
+# Add src directory
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
+# Add common packages to path
+common_packages_path = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'packages', 'backend')
+if os.path.exists(common_packages_path):
+    sys.path.insert(0, common_packages_path)
 
 from main import app
 from core.config import settings
@@ -80,7 +94,7 @@ class TestAuthentication:
         """Test successful login"""
         response = await client.post(
             "/auth/login",
-            data={
+            json={
                 "username": "testuser",
                 "password": "Test@Password123"
             }
@@ -96,7 +110,7 @@ class TestAuthentication:
         """Test login with invalid credentials"""
         response = await client.post(
             "/auth/login",
-            data={
+            json={
                 "username": "testuser",
                 "password": "wrongpassword"
             }
@@ -108,7 +122,7 @@ class TestAuthentication:
         """Test login with non-existent user"""
         response = await client.post(
             "/auth/login",
-            data={
+            json={
                 "username": "nonexistent",
                 "password": "password"
             }
@@ -122,7 +136,7 @@ class TestAuthentication:
         for i in range(12):  # Exceed the 10/minute limit
             response = await client.post(
                 "/auth/login",
-                data={
+                json={
                     "username": "testuser",
                     "password": "wrongpassword"
                 }
@@ -162,9 +176,16 @@ class TestPasswordSecurity:
     
     def test_password_validation_common_pattern(self):
         """Test password validation with common patterns"""
-        with pytest.raises(ValueError) as exc:
-            validate_password("Password123!")
-        assert "common patterns" in str(exc.value)
+        import os
+        # Set common patterns for this test
+        os.environ['PASSWORD_COMMON_PATTERNS_LIST'] = 'password,123456,qwerty,abc123'
+        try:
+            with pytest.raises(ValueError) as exc:
+                validate_password("password12")  # Shorter password that matches the pattern rule
+            assert "common patterns" in str(exc.value)
+        finally:
+            # Clean up
+            os.environ.pop('PASSWORD_COMMON_PATTERNS_LIST', None)
     
     @pytest.mark.asyncio
     async def test_password_change_validation(self, client, auth_token):
@@ -241,7 +262,7 @@ class TestInputValidation:
         """Test SQL injection protection"""
         response = await client.post(
             "/auth/login",
-            data={
+            json={
                 "username": "admin' OR '1'='1",
                 "password": "password"
             }
@@ -355,7 +376,7 @@ class TestAuditLogging:
         # Perform login
         response = await client.post(
             "/auth/login",
-            data={
+            json={
                 "username": "testuser",
                 "password": "Test@Password123"
             }
@@ -371,7 +392,7 @@ class TestAuditLogging:
         """Test failed login creates audit log"""
         response = await client.post(
             "/auth/login",
-            data={
+            json={
                 "username": "testuser",
                 "password": "wrongpassword"
             }

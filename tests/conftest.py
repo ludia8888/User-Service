@@ -7,23 +7,52 @@ import os
 from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from httpx import AsyncClient
+from unittest.mock import AsyncMock
 
 # Set test environment variables
 os.environ.update({
     "DEBUG": "true",
-    "DATABASE_URL": "postgresql+asyncpg://test_user:test_password@localhost:5433/test_user_service",
+    "DATABASE_URL": "sqlite+aiosqlite:///./test.db",
     "REDIS_URL": "redis://localhost:6380",
     "JWT_SECRET": "test-secret-key-for-testing-purposes-only-minimum-32-characters",
     "RATE_LIMIT_ENABLED": "true",
+    "PASSWORD_MIN_LENGTH": "8",
+    "PASSWORD_REQUIRE_UPPERCASE": "true",
+    "PASSWORD_REQUIRE_LOWERCASE": "true", 
+    "PASSWORD_REQUIRE_DIGITS": "true",
+    "PASSWORD_REQUIRE_SPECIAL": "true",
+    "PASSWORD_HISTORY_COUNT": "5",
+    "MFA_ISSUER": "TestService",
+    "MFA_BACKUP_CODES_COUNT": "10",
+    "RATE_LIMIT_PER_MINUTE": "60",
+    "ACCESS_TOKEN_EXPIRE_MINUTES": "30",
+    "REFRESH_TOKEN_EXPIRE_DAYS": "7",
+    "JWT_ALGORITHM": "HS256",
+    "REDIS_PREFIX": "test",
+    "PASSWORD_COMMON_PATTERNS": "[]",
+    "PASSWORD_COMMON_PATTERNS_LIST": "",
+    "AUDIT_SERVICE_ENABLED": "false",
+    "RATE_LIMIT_ENABLED": "false",
+    # Crypto keys for common_security
+    "ENVIRONMENT": "development",
+    "CRYPTO_KEY_MFA_SECRET": "dGVzdC1tZmEtc2VjcmV0LWtleS1mb3ItdGVzdGluZy1wdXJwb3Nlcw==",  # base64 encoded test key
+    "CRYPTO_KEY_ENCRYPTION_KEY": "dGVzdC1lbmNyeXB0aW9uLWtleS1mb3ItdGVzdGluZy1wdXJwb3Nlcw==",  # base64 encoded test key
+    "ENCRYPTION_KEY": "test-encryption-key-for-testing-purposes"  # fallback
 })
 
 import sys
+# Add src directory
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
+# Add common packages to path
+common_packages_path = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'packages', 'backend')
+if os.path.exists(common_packages_path):
+    sys.path.insert(0, common_packages_path)
 
 from main import app
 from models.user import Base as UserBase
 # Note: AuditBase removed as audit functionality migrated to Audit Service
 from core.database import get_db
+from .fake_redis import get_fake_redis, reset_fake_redis
 
 
 @pytest.fixture(scope="session")
@@ -75,15 +104,48 @@ async def db_session(engine, setup_database):
 @pytest.fixture
 async def client(db_session):
     """Create test client with database override"""
+    # Reset fake Redis for each test
+    reset_fake_redis()
+    
     async def override_get_db():
         yield db_session
     
     app.dependency_overrides[get_db] = override_get_db
     
-    async with AsyncClient(app=app, base_url="http://test") as ac:
-        yield ac
+    # Comprehensive Redis patching
+    import unittest.mock
+    fake_redis = get_fake_redis()
     
-    app.dependency_overrides.clear()
+    # Mock audit service to avoid network calls
+    async def mock_log_event(*args, **kwargs):
+        pass  # Do nothing in tests
+    
+    # Mock HTTP client for audit service
+    mock_http_client = AsyncMock()
+    mock_http_client.post.return_value.status_code = 200
+    mock_http_client.aclose = AsyncMock()
+    
+    patches = [
+        unittest.mock.patch('core.redis.get_redis_client', return_value=fake_redis),
+        unittest.mock.patch('core.rate_limit.get_redis_client', return_value=fake_redis),
+        unittest.mock.patch('redis.Redis.from_url', return_value=fake_redis),
+        unittest.mock.patch('redis.asyncio.Redis.from_url', return_value=fake_redis),
+        unittest.mock.patch('redis.asyncio.from_url', return_value=fake_redis),
+        # Mock audit service
+        unittest.mock.patch('services.audit_service.AuditService.log_event', side_effect=mock_log_event),
+        unittest.mock.patch('httpx.AsyncClient', return_value=mock_http_client),
+    ]
+    
+    for patch in patches:
+        patch.start()
+    
+    try:
+        async with AsyncClient(app=app, base_url="http://test") as ac:
+            yield ac
+    finally:
+        for patch in patches:
+            patch.stop()
+        app.dependency_overrides.clear()
 
 
 @pytest.fixture
@@ -122,7 +184,7 @@ async def auth_headers(client, registered_user):
     # Login with the registered user
     response = await client.post(
         "/auth/login",
-        data={
+        json={
             "username": registered_user["username"],
             "password": registered_user["password"]
         }

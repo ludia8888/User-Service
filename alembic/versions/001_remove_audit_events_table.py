@@ -11,21 +11,24 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision = '001_remove_audit_events_table'
-down_revision = None
+down_revision = '000_initial_tables'
 branch_labels = None
 depends_on = None
 
 
 def upgrade():
     """Remove audit_events table as we're using centralized Audit Service"""
-    # Create backup table first (optional, for safety)
+    # Check if audit_events table exists before backing up
     op.execute("""
-        CREATE TABLE IF NOT EXISTS audit_events_backup AS 
-        SELECT * FROM audit_events;
+        DO $$ 
+        BEGIN
+            IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'audit_events') THEN
+                CREATE TABLE IF NOT EXISTS audit_events_backup AS 
+                SELECT * FROM audit_events;
+                DROP TABLE audit_events;
+            END IF;
+        END $$;
     """)
-    
-    # Drop the audit_events table
-    op.drop_table('audit_events')
 
 
 def downgrade():

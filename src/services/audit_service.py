@@ -241,6 +241,26 @@ class AuditService:
             details={"changed_by": changed_by}
         )
     
+    async def log_password_change_failed(
+        self,
+        user_id: str,
+        username: str,
+        reason: str,
+        ip_address: Optional[str] = None
+    ):
+        """Log failed password change attempt"""
+        await self.log_event(
+            AuditEventType.SUSPICIOUS_ACTIVITY,
+            user_id=user_id,
+            username=username,
+            ip_address=ip_address,
+            details={
+                "activity": "password_change_failed",
+                "reason": reason
+            },
+            success=False
+        )
+    
     async def log_mfa_enabled(
         self,
         user_id: str,
@@ -286,6 +306,26 @@ class AuditService:
                 "email": email,
                 "created_by": created_by,
                 "roles": roles
+            }
+        )
+    
+    async def log_user_updated(
+        self,
+        user_id: str,
+        username: str,
+        changes: Dict[str, Any],
+        updated_by: str,
+        ip_address: Optional[str] = None
+    ):
+        """Log user update"""
+        await self.log_event(
+            AuditEventType.USER_UPDATED,
+            user_id=user_id,
+            username=username,
+            ip_address=ip_address,
+            details={
+                "changes": changes,
+                "updated_by": updated_by
             }
         )
     

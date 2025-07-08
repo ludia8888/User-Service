@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from core.database import get_db
 from services.user_service import UserService
 from services.auth_service import AuthService
+from services.service_factory import create_service_factory
 from middleware.api_key_auth import require_service_auth
 
 router = APIRouter(prefix="/internal", tags=["Internal"])
@@ -94,7 +95,9 @@ async def validate_token(
     Validate JWT token and get user info
     Used by other services to validate user tokens
     """
-    auth_service = AuthService(db)
+    # Use service factory for proper dependency injection
+    service_factory = create_service_factory(db)
+    auth_service = service_factory.get_auth_service()
     
     try:
         # Validate token

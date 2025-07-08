@@ -3,6 +3,7 @@ Multi-Factor Authentication Service
 Handles TOTP generation, validation, and backup codes
 """
 import base64
+from common_security import encrypt_text, decrypt_text, hash_data
 import secrets
 import qrcode
 import io
@@ -22,6 +23,9 @@ class MFAService:
     
     def __init__(self, db: AsyncSession):
         self.db = db
+        # Import audit service here to avoid circular imports
+        from services.audit_service import AuditService
+        self.audit_service = AuditService(db)
     
     async def generate_mfa_secret(self, user: User) -> Tuple[str, str]:
         """
@@ -44,7 +48,6 @@ class MFAService:
         
         # Store encrypted secret in database
         user.mfa_secret = self._encrypt_secret(secret)
-        await self.db.commit()
         
         return secret, provisioning_uri
     
@@ -68,9 +71,18 @@ class MFAService:
         # Update user
         user.mfa_enabled = True
         user.mfa_enabled_at = datetime.now(timezone.utc)
-        user.mfa_backup_codes = self._hash_backup_codes(backup_codes)
+        user.backup_codes = self._hash_backup_codes(backup_codes)
         
-        await self.db.commit()
+        # Log MFA enablement
+        try:
+            await self.audit_service.log_mfa_enabled(
+                user_id=user.id,
+                username=user.username
+            )
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Audit logging failed for MFA enablement {user.username}: {e}")
         
         return backup_codes
     
@@ -80,10 +92,19 @@ class MFAService:
         
         user.mfa_enabled = False
         user.mfa_secret = None
-        user.mfa_backup_codes = None
+        user.backup_codes = None
         user.mfa_enabled_at = None
         
-        await self.db.commit()
+        # Log MFA disablement
+        try:
+            await self.audit_service.log_mfa_disabled(
+                user_id=user.id,
+                username=user.username
+            )
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Audit logging failed for MFA disablement {user.username}: {e}")
     
     async def verify_totp(self, user: User, code: str) -> bool:
         """Verify TOTP code"""
@@ -101,20 +122,19 @@ class MFAService:
     
     async def verify_backup_code(self, user: User, code: str) -> bool:
         """Verify and consume backup code"""
-        if not user.mfa_backup_codes:
+        if not user.backup_codes:
             return False
         
         # Normalize code
         code = code.upper().replace(" ", "")
         
         # Check each backup code
-        backup_codes = user.mfa_backup_codes or []
+        backup_codes = user.backup_codes or []
         for i, stored_hash in enumerate(backup_codes):
             if self._verify_backup_code(code, stored_hash):
                 # Remove used code
                 backup_codes.pop(i)
-                user.mfa_backup_codes = backup_codes
-                await self.db.commit()
+                user.backup_codes = backup_codes
                 return True
         
         return False
@@ -148,8 +168,7 @@ class MFAService:
         backup_codes = self._generate_backup_codes()
         
         # Store hashed codes
-        user.mfa_backup_codes = self._hash_backup_codes(backup_codes)
-        await self.db.commit()
+        user.backup_codes = self._hash_backup_codes(backup_codes)
         
         return backup_codes
     
@@ -179,23 +198,17 @@ class MFAService:
         return codes
     
     def _hash_backup_codes(self, codes: List[str]) -> List[str]:
-        """Hash backup codes for storage"""
-        # In production, use proper hashing like bcrypt
-        # For now, simple example
-        return [f"hashed_{code}" for code in codes]
+        """Hash backup codes for storage using common_security"""
+        return [hash_data(code, algorithm="sha256") for code in codes]
     
     def _verify_backup_code(self, code: str, hashed: str) -> bool:
         """Verify backup code against hash"""
-        # In production, use proper verification
-        return hashed == f"hashed_{code}"
+        return hash_data(code, algorithm="sha256") == hashed
     
     def _encrypt_secret(self, secret: str) -> str:
-        """Encrypt MFA secret for storage"""
-        # In production, use proper encryption (e.g., Fernet)
-        # For now, base64 encoding as example
-        return base64.b64encode(secret.encode()).decode()
+        """Encrypt MFA secret for storage using common_security"""
+        return encrypt_text(secret, key_id="mfa_secret")
     
     def _decrypt_secret(self, encrypted: str) -> str:
-        """Decrypt MFA secret"""
-        # In production, use proper decryption
-        return base64.b64decode(encrypted.encode()).decode()
+        """Decrypt MFA secret using common_security"""
+        return decrypt_text(encrypted, key_id="mfa_secret")

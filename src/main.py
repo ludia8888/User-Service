@@ -18,7 +18,7 @@ from core.logging import setup_logging
 from core.security_headers import SecurityHeadersMiddleware
 from core.rate_limit import RateLimitMiddleware
 from middleware.api_key_auth import ServiceAuthMiddleware
-from api import auth, iam_adapter, internal
+from api import auth_main, iam_adapter, internal, admin_routes
 
 # Setup logging
 setup_logging()
@@ -74,7 +74,7 @@ app = FastAPI(
 
 # Add security middleware
 # Configure allowed hosts based on environment
-allowed_hosts = ["*"] if settings.DEBUG else ["localhost", "127.0.0.1", ".yourdomain.com"]
+allowed_hosts = ["*"] if settings.DEBUG else ["localhost", "127.0.0.1", "user-service", "user-service:8000", ".yourdomain.com"]
 app.add_middleware(
     TrustedHostMiddleware,
     allowed_hosts=allowed_hosts
@@ -132,9 +132,10 @@ async def health_check():
 
 
 # Include routers
-app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
+app.include_router(auth_main.router)
 app.include_router(iam_adapter.router, tags=["IAM Adapter"])
 app.include_router(internal.router, tags=["Internal API"])
+app.include_router(admin_routes.router, tags=["Admin API"])
 
 
 # Custom OpenAPI schema

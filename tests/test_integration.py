@@ -46,7 +46,7 @@ class TestAuthenticationIntegration:
         """Test login flow"""
         response = await client.post(
             "/auth/login",
-            data={
+            json={
                 "username": test_user_data["username"],
                 "password": test_user_data["password"]
             }
@@ -63,7 +63,7 @@ class TestAuthenticationIntegration:
         """Test login with invalid credentials"""
         response = await client.post(
             "/auth/login",
-            data={
+            json={
                 "username": "testuser",
                 "password": "WrongPassword123!"
             }
@@ -76,7 +76,7 @@ class TestAuthenticationIntegration:
         # Login first
         login_response = await client.post(
             "/auth/login",
-            data={
+            json={
                 "username": test_user_data["username"],
                 "password": test_user_data["password"]
             }
@@ -128,7 +128,7 @@ class TestPasswordManagement:
         # Try login with new password
         response = await client.post(
             "/auth/login",
-            data={
+            json={
                 "username": test_user_data["username"],
                 "password": "NewSecure@Pass456"
             }
@@ -159,7 +159,7 @@ class TestRateLimiting:
         for i in range(15):  # Exceed the 10/minute limit
             task = client.post(
                 "/auth/login",
-                data={
+                json={
                     "username": "testuser",
                     "password": "wrongpassword"
                 }
@@ -205,7 +205,7 @@ class TestInputValidation:
         # Try SQL injection in username
         response = await client.post(
             "/auth/login",
-            data={
+            json={
                 "username": "admin' OR '1'='1",
                 "password": "password"
             }

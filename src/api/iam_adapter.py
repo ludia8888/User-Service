@@ -15,6 +15,8 @@ from core.config import settings
 from core.validators import sanitize_string
 from services.auth_service import AuthService
 from services.user_service import UserService
+from services.service_factory import create_service_factory
+from services.audit_service import AuditService
 
 router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
@@ -110,55 +112,124 @@ class IAMHealthResponse(BaseModel):
 @router.post("/api/v1/auth/validate", response_model=TokenValidationResponse)
 async def validate_token(
     request: TokenValidationRequest,
+    request_context: Request,
     db: AsyncSession = Depends(get_db)
 ):
     """
     OMS-compatible token validation endpoint
     Maps to User-Service token validation
     """
-    auth_service = AuthService(db)
+    # Use service factory for proper dependency injection
+    service_factory = create_service_factory(db)
+    auth_service = service_factory.get_auth_service()
+    audit_service = AuditService(db)
+    
+    # Extract request context for audit
+    client_ip = request_context.client.host if request_context.client else "unknown"
+    user_agent = request_context.headers.get("user-agent", "unknown")
     
     try:
-        # Decode and validate token
-        payload = auth_service.decode_token(request.token)
+        # Use verify_token_and_get_user_data for consistent validation
+        user_data = await auth_service.verify_token_and_get_user_data(request.token)
         
-        # Get user data
-        user_id = payload.get("sub")
-        user = await auth_service.get_user_by_id(user_id)
-        
-        if not user:
+        if not user_data:
+            # Log failed token validation
+            try:
+                await audit_service.log_login_failed(
+                    username="unknown",
+                    ip_address=client_ip,
+                    user_agent=user_agent,
+                    reason="User not found for valid token"
+                )
+            except Exception as e:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Audit logging failed for token validation failure: {e}")
+            
             return TokenValidationResponse(
                 valid=False,
                 error="User not found"
             )
         
+        # Extract user from user_data
+        user = user_data.get("user")
+        if not user:
+            return TokenValidationResponse(
+                valid=False,
+                error="Invalid user data"
+            )
+        
         # Check required scopes (map to permissions)
         if request.required_scopes:
-            user_permissions = set(user.permissions)
+            user_permissions = set(user_data.get("permissions", []))
             required_permissions = set(request.required_scopes)
             
             if not required_permissions.issubset(user_permissions):
+                # Log insufficient permissions
+                try:
+                    await audit_service.log_login_failed(
+                        username=user.username,
+                        ip_address=client_ip,
+                        user_agent=user_agent,
+                        reason="Insufficient permissions for token validation"
+                    )
+                except Exception as e:
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.error(f"Audit logging failed for permission failure: {e}")
+                
                 return TokenValidationResponse(
                     valid=False,
                     error="Insufficient permissions"
                 )
         
+        # Log successful token validation
+        try:
+            await audit_service.log_login_success(
+                user_id=user.id,
+                username=user.username,
+                ip_address=client_ip,
+                user_agent=user_agent
+            )
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Audit logging failed for successful token validation: {e}")
+        
         # Convert permissions to scopes for OMS compatibility
-        scopes = _convert_permissions_to_scopes(user.permissions)
+        permissions = user_data.get("permissions", [])
+        scopes = _convert_permissions_to_scopes(permissions)
+        
+        # Extract token expiration from user_data
+        token_data = user_data.get("token_data", {})
+        exp = token_data.get("exp")
         
         return TokenValidationResponse(
             valid=True,
             user_id=user.id,
             username=user.username,
             email=user.email,
-            roles=user.roles,
-            permissions=user.permissions,
-            teams=user.teams,
+            roles=user_data.get("roles", []),
+            permissions=permissions,
+            teams=user_data.get("teams", []),
             scopes=scopes,
-            exp=payload.get("exp")
+            exp=exp
         )
         
     except Exception as e:
+        # Log token validation error
+        try:
+            await audit_service.log_login_failed(
+                username="unknown",
+                ip_address=client_ip,
+                user_agent=user_agent,
+                reason=f"Token validation error: {str(e)}"
+            )
+        except Exception as audit_e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Audit logging failed for token validation error: {audit_e}")
+        
         return TokenValidationResponse(
             valid=False,
             error=str(e)
@@ -174,7 +245,9 @@ async def get_user_info_by_id(
     OMS-compatible user info endpoint
     Maps to User-Service user lookup
     """
-    auth_service = AuthService(db)
+    # Use service factory for proper dependency injection
+    service_factory = create_service_factory(db)
+    auth_service = service_factory.get_auth_service()
     user_service = UserService(db)
     
     try:
@@ -226,7 +299,9 @@ async def check_scopes(
     OMS-compatible scope checking endpoint
     Maps to User-Service permission checking
     """
-    auth_service = AuthService(db)
+    # Use service factory for proper dependency injection
+    service_factory = create_service_factory(db)
+    auth_service = service_factory.get_auth_service()
     
     try:
         # Get user
@@ -281,7 +356,9 @@ async def service_auth(
     OMS-compatible service authentication endpoint
     Creates service tokens for inter-service communication
     """
-    auth_service = AuthService(db)
+    # Use service factory for proper dependency injection
+    service_factory = create_service_factory(db)
+    auth_service = service_factory.get_auth_service()
     
     try:
         # Validate service credentials
@@ -299,7 +376,7 @@ async def service_auth(
         )
         
         # Create service token
-        access_token = auth_service.create_access_token(service_user)
+        access_token = await auth_service.create_access_token(service_user)
         
         return ServiceAuthResponse(
             access_token=access_token,
@@ -325,7 +402,9 @@ async def refresh_token_iam(
     OMS-compatible token refresh endpoint
     Maps to User-Service token refresh
     """
-    auth_service = AuthService(db)
+    # Use service factory for proper dependency injection
+    service_factory = create_service_factory(db)
+    auth_service = service_factory.get_auth_service()
     
     try:
         # Validate refresh token
@@ -341,7 +420,7 @@ async def refresh_token_iam(
             raise ValueError("User not found")
         
         # Generate new access token
-        access_token = auth_service.create_access_token(user)
+        access_token = await auth_service.create_access_token(user)
         
         return {
             "access_token": access_token,
@@ -481,7 +560,7 @@ async def _get_or_create_service_user(
     db: AsyncSession
 ):
     """
-    Get or create a service user for inter-service communication
+    Get or create a service user for inter-service communication with race condition protection
     """
     from models.user import User, UserStatus
     from services.user_service import UserService
@@ -492,22 +571,54 @@ async def _get_or_create_service_user(
     service_user = await user_service.get_user_by_username(f"service-{service_id}")
     
     if not service_user:
-        # Create service user
-        permissions = _convert_scopes_to_permissions(requested_scopes)
-        
-        service_user = await user_service.create_user(
-            username=f"service-{service_id}",
-            email=f"{service_id}@system.local",
-            password="service-account-password",
-            full_name=f"Service Account: {service_id}",
-            roles=["service"],
-            created_by="system"
-        )
-        
-        # Set permissions and teams (update after creation)
-        service_user.permissions = permissions
-        service_user.teams = ["system"]
-        service_user.status = UserStatus.ACTIVE
-        await db.commit()
+        try:
+            # Create service user
+            permissions = _convert_scopes_to_permissions(requested_scopes)
+            
+            # Create service user with service role
+            from services.rbac_service import RBACService
+            rbac_service = RBACService(db)
+            
+            # Get or create service role
+            service_role = await rbac_service.get_role_by_name("service")
+            if not service_role:
+                # Create service role if it doesn't exist
+                from models.rbac import Role
+                service_role = Role(
+                    name="service",
+                    description="Service account role",
+                    priority=100
+                )
+                db.add(service_role)
+                await db.flush()
+            
+            # Combine requested permissions with default service permissions
+            combined_permissions = list(set(permissions))
+            
+            service_user = await user_service.create_user(
+                username=f"service-{service_id}",
+                email=f"{service_id}@system.local",
+                password="service-account-password",
+                full_name=f"Service Account: {service_id}",
+                role_names=["service"],
+                created_by="system"
+            )
+            
+            # Set user status
+            service_user.status = UserStatus.ACTIVE
+            
+            # Assign permissions directly to service user if needed
+            if combined_permissions:
+                # TODO: Implement direct permission assignment
+                pass
+            
+        except ValueError as e:
+            # If user creation fails due to race condition, try to get the user again
+            if "User already exists" in str(e):
+                service_user = await user_service.get_user_by_username(f"service-{service_id}")
+                if service_user:
+                    return service_user
+            # Re-raise other ValueError types
+            raise
     
     return service_user
