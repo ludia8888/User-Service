@@ -95,7 +95,7 @@ class Settings(BaseSettings):
     LOG_FORMAT: str = "json"
     
     # Rate Limiting
-    RATE_LIMIT_ENABLED: bool = True
+    RATE_LIMIT_ENABLED: bool = False
     RATE_LIMIT_PER_MINUTE: int = 60
     
     # Audit Service
