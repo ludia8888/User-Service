@@ -13,6 +13,7 @@ from sqlalchemy.sql import func
 
 from core.database import Base
 from models.rbac import user_roles, user_permissions, user_teams, Permission
+from models.organization import user_organizations
 
 
 class UserStatus(str, Enum):
@@ -80,6 +81,14 @@ class User(Base):
     teams = relationship(
         'Team',
         secondary=user_teams,
+        lazy='dynamic'
+    )
+    
+    # Organizations relationship
+    organizations = relationship(
+        'Organization',
+        secondary=user_organizations,
+        back_populates='users',
         lazy='dynamic'
     )
     

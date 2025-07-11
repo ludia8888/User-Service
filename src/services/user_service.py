@@ -81,7 +81,7 @@ class UserService:
                 password_hash=password_hash,
                 status=UserStatus.ACTIVE,
                 password_changed_at=datetime.now(timezone.utc),
-                created_by=created_by,
+                created_by=None if created_by in ["system", "self-registration"] else created_by,
                 created_at=datetime.now(timezone.utc)
             )
             

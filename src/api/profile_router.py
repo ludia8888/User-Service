@@ -8,9 +8,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
-from middleware.auth_dependencies import get_current_user
+from middleware.auth_dependencies import get_current_user, CurrentUser
 from schemas.user_schemas import UserProfileResponse, UserPermissionsResponse, RoleResponse, TeamResponse, PermissionResponse
-from services.user_service import UserService
+from services.auth_service import AuthService
 from models.user import User
 
 router = APIRouter()
@@ -18,7 +18,7 @@ router = APIRouter()
 
 @router.get("/profile", response_model=UserProfileResponse)
 async def get_user_profile(
-    current_user: User = Depends(get_current_user),
+    current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -27,22 +27,32 @@ async def get_user_profile(
     Returns basic profile information without exposing detailed permissions.
     Use separate endpoints for permission details if needed.
     """
+    # Get the actual user object from database
+    auth_service = AuthService(db)
+    user = await auth_service.get_user_by_id(current_user.user_id)
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
     return UserProfileResponse(
-        user_id=str(current_user.id),
-        username=current_user.username,
-        email=current_user.email,
-        full_name=current_user.full_name,
-        status=current_user.status,
-        mfa_enabled=current_user.mfa_enabled,
-        created_at=current_user.created_at,
-        last_login=current_user.last_login
+        user_id=str(user.id),
+        username=user.username,
+        email=user.email,
+        full_name=user.full_name,
+        status=user.status,
+        mfa_enabled=user.mfa_enabled,
+        created_at=user.created_at,
+        last_login=user.last_login
     )
 
 
 @router.get("/profile/{user_id}", response_model=UserProfileResponse)
 async def get_user_profile_by_id(
     user_id: str,
-    current_user: User = Depends(get_current_user),
+    current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -51,14 +61,14 @@ async def get_user_profile_by_id(
     Security: Only accessible by admin users
     """
     # Check if current user has permission to view other profiles
-    if not current_user.has_permission("user:read") and current_user.id != user_id:
+    if not current_user.has_permission("user:read") and current_user.user_id != user_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Insufficient permissions to view user profile"
         )
     
-    user_service = UserService(db)
-    target_user = await user_service.get_user_by_id(user_id)
+    auth_service = AuthService(db)
+    target_user = await auth_service.get_user_by_id(user_id)
     
     if not target_user:
         raise HTTPException(
@@ -80,7 +90,7 @@ async def get_user_profile_by_id(
 
 @router.get("/permissions", response_model=UserPermissionsResponse)
 async def get_user_permissions(
-    current_user: User = Depends(get_current_user),
+    current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -132,7 +142,7 @@ async def get_user_permissions(
 @router.get("/permissions/{user_id}", response_model=UserPermissionsResponse)
 async def get_user_permissions_by_id(
     user_id: str,
-    current_user: User = Depends(get_current_user),
+    current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -147,8 +157,8 @@ async def get_user_permissions_by_id(
             detail="Insufficient permissions to view user permissions"
         )
     
-    user_service = UserService(db)
-    target_user = await user_service.get_user_by_id(user_id)
+    auth_service = AuthService(db)
+    target_user = await auth_service.get_user_by_id(user_id)
     
     if not target_user:
         raise HTTPException(

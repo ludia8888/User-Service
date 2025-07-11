@@ -212,7 +212,7 @@ async def login_step2(
         )
 
 
-@router.post("/login/legacy", response_model=LoginResponse)
+@router.post("/login/legacy", response_model=LoginResponse, deprecated=True, include_in_schema=False)
 @rate_limit(requests=5, window=60)  # More restrictive for legacy endpoint
 async def login_legacy(
     request: Request,
@@ -386,7 +386,7 @@ async def get_user_info(
     # Use service factory for proper dependency injection
     service_factory = create_service_factory(db)
     auth_service = service_factory.get_auth_service()
-    rbac_service = service_factory.get_rbac_service()
+    user_service = service_factory.get_user_service()
     
     try:
         # Verify token and get user data
@@ -402,10 +402,10 @@ async def get_user_info(
         user = user_data.get("user")
         
         # Get user roles and permissions
-        user_roles = await rbac_service.get_user_roles(user.id)
+        user_roles = await user_service.get_user_roles(user.id)
         role_names = [role.name for role in user_roles]
         
-        permissions = await rbac_service.get_user_permissions(user.id)
+        permissions = await user_service.get_user_permissions(user.id)
         
         # Convert permissions to scopes for OMS compatibility
         from api.iam_adapter import _convert_permissions_to_scopes

@@ -243,6 +243,9 @@ class Team(Base):
     team_type = Column(String(50), default="project")  # project, department, functional
     parent_team_id = Column(String(36), ForeignKey('teams.id'), nullable=True)
     
+    # Organization relationship
+    organization_id = Column(String(36), ForeignKey('organizations.id'), nullable=True, index=True)
+    
     # Team settings
     max_members = Column(Integer, default=None)  # NULL means unlimited
     requires_approval = Column(Boolean, default=False)
@@ -268,6 +271,9 @@ class Team(Base):
     
     # Self-referential relationship for parent/child teams
     parent_team = relationship('Team', remote_side=[id], backref='child_teams')
+    
+    # Organization relationship (will be completed when organization model is imported)
+    organization = relationship('Organization', back_populates='teams')
     
     # Indexes
     __table_args__ = (

@@ -1,19 +1,38 @@
 """
 Role-based Access Control (RBAC) Service
 Handles role management and permission assignment
+This is a compatibility layer that delegates to the database-backed RBACService
 """
-from typing import List, Dict, Set, Optional
+from typing import List, Dict, Set, Optional, Any
+from sqlalchemy.ext.asyncio import AsyncSession
 from core.config import settings
+from services.rbac_service import RBACService
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class RoleService:
+    """
+    Service for managing roles and permissions.
+    
+    This service acts as a compatibility layer between the old config-based
+    role management and the new database-backed RBAC system. It provides
+    synchronous methods for backward compatibility while delegating to
+    the async RBACService when possible.
+    
+    For new code, consider using RBACService directly for better performance
+    and full async support.
+    """
     """Service for managing roles and permissions"""
     
-    def __init__(self):
+    def __init__(self, db: Optional[AsyncSession] = None):
         self.allowed_roles = set(settings.ALLOWED_ROLES)
         self.default_role_permissions = settings.DEFAULT_ROLE_PERMISSIONS
         self.default_role_teams = settings.DEFAULT_ROLE_TEAMS
         self.default_new_user_role = settings.DEFAULT_NEW_USER_ROLE
+        self.db = db
+        self.rbac_service = RBACService(db) if db else None
     
     def is_valid_role(self, role: str) -> bool:
         """Check if a role is valid"""
@@ -37,6 +56,14 @@ class RoleService:
     
     def get_permissions_for_roles(self, roles: List[str]) -> List[str]:
         """Get all permissions for the given roles"""
+        # If we have a database connection, use the RBACService
+        if self.rbac_service:
+            # This method is synchronous but RBACService is async
+            # For backward compatibility, we'll use the default config
+            # In production, consider making this async or using a different pattern
+            pass
+        
+        # Fallback to config-based permissions
         permissions = set()
         
         for role in roles:
@@ -130,6 +157,67 @@ class RoleService:
             merged.update(team_list)
         return list(merged)
     
+    # Async methods for database operations
+    async def get_user_roles_async(self, user_id: str) -> List[str]:
+        """Get user roles from database"""
+        if not self.rbac_service:
+            raise RuntimeError("Database connection required for async operations")
+        
+        roles = await self.rbac_service.get_user_roles(user_id)
+        return [role.name for role in roles]
+    
+    async def get_user_permissions_async(self, user_id: str) -> List[str]:
+        """Get all user permissions from database"""
+        if not self.rbac_service:
+            raise RuntimeError("Database connection required for async operations")
+        
+        permissions = await self.rbac_service.get_user_permissions(user_id)
+        return list(permissions)
+    
+    async def assign_role_async(self, user_id: str, role_name: str, assigned_by: str = None) -> bool:
+        """Assign role to user in database"""
+        if not self.rbac_service:
+            raise RuntimeError("Database connection required for async operations")
+        
+        if not self.is_valid_role(role_name):
+            raise ValueError(f"Invalid role: {role_name}")
+        
+        return await self.rbac_service.assign_role_to_user(user_id, role_name, assigned_by)
+    
+    async def remove_role_async(self, user_id: str, role_name: str) -> bool:
+        """Remove role from user in database"""
+        if not self.rbac_service:
+            raise RuntimeError("Database connection required for async operations")
+        
+        return await self.rbac_service.remove_role_from_user(user_id, role_name)
+    
+    async def sync_user_roles_with_config(self, user_id: str, config_roles: List[str]) -> None:
+        """Sync user roles from config to database"""
+        if not self.rbac_service:
+            logger.warning("No database connection, cannot sync roles")
+            return
+        
+        try:
+            # Get current roles from database
+            current_roles = await self.get_user_roles_async(user_id)
+            
+            # Validate config roles
+            validated_roles = self.validate_roles(config_roles)
+            
+            # Add new roles
+            for role in validated_roles:
+                if role not in current_roles:
+                    await self.assign_role_async(user_id, role, "system")
+            
+            # Remove roles not in config (optional, based on business logic)
+            # for role in current_roles:
+            #     if role not in validated_roles:
+            #         await self.remove_role_async(user_id, role)
+            
+            logger.info(f"Synced roles for user {user_id}: {validated_roles}")
+        except Exception as e:
+            logger.error(f"Failed to sync roles for user {user_id}: {str(e)}")
+    
     def validate_configuration(self) -> Dict[str, bool]:
         """Validate the role configuration for completeness and consistency"""
         validation_results = {
@@ -137,7 +225,8 @@ class RoleService:
             "all_roles_have_permissions": True,
             "all_roles_have_teams": True,
             "no_empty_permissions": True,
-            "no_empty_teams": True
+            "no_empty_teams": True,
+            "has_database_connection": self.rbac_service is not None
         }
         
         for role in self.allowed_roles:
@@ -153,7 +242,7 @@ class RoleService:
         
         return validation_results
     
-    def get_configuration_summary(self) -> Dict[str, any]:
+    def get_configuration_summary(self) -> Dict[str, Any]:
         """Get a summary of the current role configuration"""
         validation = self.validate_configuration()
         
@@ -162,5 +251,16 @@ class RoleService:
             "total_roles": len(self.allowed_roles),
             "available_roles": list(self.allowed_roles),
             "validation_status": validation,
-            "is_valid": all(validation.values())
+            "is_valid": all(validation.values()),
+            "mode": "database" if self.rbac_service else "config"
         }
+    
+    @classmethod
+    def create_with_db(cls, db: AsyncSession) -> 'RoleService':
+        """Factory method to create RoleService with database connection"""
+        return cls(db=db)
+    
+    @classmethod
+    def create_config_only(cls) -> 'RoleService':
+        """Factory method to create RoleService without database (config only)"""
+        return cls(db=None)

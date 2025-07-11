@@ -15,6 +15,8 @@ from sqlalchemy import select
 
 from core.config import settings
 from models.user import User, UserStatus
+from models.rbac import Role
+from services.jwks_service import jwks_service
 
 logger = logging.getLogger(__name__)
 
@@ -271,8 +273,13 @@ class AuthService:
         from api.iam_adapter import _convert_permissions_to_scopes
         scopes = _convert_permissions_to_scopes(list(permissions))
         
+        scope_string = " ".join(scopes)
+        
         payload = {
-            "sub": user.id,  # Subject - user identifier
+            "sub": str(user.id),  # Subject - user identifier
+            "user_id": str(user.id),  # Additional user_id claim for compatibility
+            "username": user.username,  # Username claim
+            "email": user.email,  # Email claim
             "type": "access",  # Token type
             "exp": datetime.now(timezone.utc) + timedelta(
                 minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
@@ -280,44 +287,60 @@ class AuthService:
             "iat": datetime.now(timezone.utc),  # Issued at
             "iss": getattr(settings, 'JWT_ISSUER', 'user-service'),  # Issuer
             "aud": getattr(settings, 'JWT_AUDIENCE', 'oms'),  # Audience
+            "kid": jwks_service.get_kid(),  # Key ID for JWKS
             "sid": str(uuid.uuid4()),  # Session ID for revocation
             "roles": role_names,  # User roles
-            "scopes": scopes  # User permissions as scopes
+            "scope": scope_string,  # User permissions as space-separated scopes (OIDC standard)
+            "scopes": scopes,  # User permissions as array (for compatibility)
+            "tenant_id": getattr(user, 'tenant_id', 'default')  # Tenant ID
         }
+        
+        # Use RSA private key for signing
+        private_key = jwks_service.get_private_key()
         
         return jwt.encode(
             payload,
-            settings.JWT_SECRET,
-            algorithm=settings.JWT_ALGORITHM
+            private_key,
+            algorithm="RS256",
+            headers={"kid": jwks_service.get_kid()}
         )
     
     def create_refresh_token(self, user: User) -> str:
         """Create JWT refresh token"""
         payload = {
-            "sub": user.id,
+            "sub": str(user.id),
             "type": "refresh",
             "exp": datetime.now(timezone.utc) + timedelta(
                 days=settings.REFRESH_TOKEN_EXPIRE_DAYS
             ),
             "iat": datetime.now(timezone.utc),
             "iss": getattr(settings, 'JWT_ISSUER', 'user-service'),  # Issuer claim
+            "aud": getattr(settings, 'JWT_AUDIENCE', 'oms'),  # Audience
+            "kid": jwks_service.get_kid(),  # Key ID for JWKS
             "sid": str(uuid.uuid4())
         }
         
+        # Use RSA private key for signing
+        private_key = jwks_service.get_private_key()
+        
         return jwt.encode(
             payload,
-            settings.JWT_SECRET,
-            algorithm=settings.JWT_ALGORITHM
+            private_key,
+            algorithm="RS256",
+            headers={"kid": jwks_service.get_kid()}
         )
     
     def decode_token(self, token: str) -> dict:
         """Decode JWT token"""
         try:
             
+            # Use RSA public key for verification
+            public_key = jwks_service.get_public_key()
+            
             payload = jwt.decode(
                 token,
-                settings.JWT_SECRET,
-                algorithms=[settings.JWT_ALGORITHM],
+                public_key,
+                algorithms=["RS256"],
                 audience=getattr(settings, 'JWT_AUDIENCE', 'oms'),
                 issuer=getattr(settings, 'JWT_ISSUER', 'user-service')
             )
@@ -396,17 +419,38 @@ class AuthService:
             raise ValueError("User not found")
         
         # Extract role names and permissions from relationships
-        role_names = [role.name for role in user.roles]
+        # Since relationships are lazy='dynamic', we need to execute them
+        roles_result = await self.db.execute(user.roles)
+        roles = roles_result.scalars().all()
+        role_names = [role.name for role in roles]
         
         # Collect all permissions (from roles and direct permissions)
         all_permissions = set()
-        for role in user.roles:
-            for permission in role.permissions:
+        
+        # Get permissions from roles
+        from models.rbac import Permission
+        for role in roles:
+            perms_result = await self.db.execute(role.permissions)
+            perms = perms_result.scalars().all()
+            for permission in perms:
                 all_permissions.add(permission.name)
-        for permission in user.direct_permissions:
+        
+        # Get direct permissions
+        direct_perms_result = await self.db.execute(user.direct_permissions)
+        direct_perms = direct_perms_result.scalars().all()
+        for permission in direct_perms:
             all_permissions.add(permission.name)
         
-        team_names = [team.name for team in user.teams]
+        # Get teams - for now, skip teams due to DB schema mismatch
+        # TODO: Run migration to add organization_id to teams table
+        team_names = []
+        try:
+            teams_result = await self.db.execute(user.teams)
+            teams = teams_result.scalars().all()
+            team_names = [team.name for team in teams]
+        except Exception as e:
+            logger.warning(f"Failed to load teams for user {user_id}: {e}")
+            # Continue without teams
         
         user_data = {
             "user_id": user.id,

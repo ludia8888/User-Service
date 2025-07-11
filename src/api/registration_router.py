@@ -3,6 +3,7 @@ User Registration Router
 Handles new user registration
 """
 import asyncio
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
@@ -18,6 +19,8 @@ from core.validators import (
 )
 from services.user_service import UserService
 from services.audit_service import AuditService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -78,7 +81,7 @@ class RegisterResponse(BaseModel):
     message: str = "User registered successfully"
 
 
-@router.post("/register", response_model=RegisterResponse)
+@router.post("/register", response_model=RegisterResponse, status_code=status.HTTP_201_CREATED)
 @rate_limit(requests=5, window=300)  # 5 registrations per 5 minutes
 async def register(
     request: Request,
@@ -130,20 +133,60 @@ async def register(
             created_by="self-registration"
         )
         
-        # User creation includes audit logging in the service layer
-        # Database transaction will be committed by the service
+        # Commit the transaction to persist the user and role assignments
+        await db.commit()
         
-        # Return minimal response for security (no permission/role/team exposure)
-        return UserCreateResponse(
-            user=UserBasicInfo(
-                user_id=str(user.id),
-                username=user.username,
-                email=user.email,
-                status=user.status
-            )
+        # Ensure we have the user data we need
+        # Since relationships are lazy='dynamic', we need to execute them properly
+        role_names = []
+        permission_names = []
+        team_names = []
+        
+        try:
+            # Access roles - lazy='dynamic' requires executing the query
+            roles_result = await db.execute(user.roles)
+            roles = roles_result.scalars().all()
+            role_names = [role.name for role in roles]
+            
+            # Access permissions through roles
+            for role in roles:
+                # Load permissions for each role
+                perms_result = await db.execute(role.permissions)
+                perms = perms_result.scalars().all()
+                permission_names.extend([perm.name for perm in perms])
+            
+            # Remove duplicates from permissions
+            permission_names = list(set(permission_names))
+            
+            # Access teams
+            teams_result = await db.execute(user.teams)
+            teams = teams_result.scalars().all()
+            team_names = [team.name for team in teams]
+        except Exception as e:
+            # If we can't load relationships, use defaults
+            logger.warning(f"Failed to load user relationships: {e}")
+            role_names = role_names or []
+            permission_names = permission_names or []
+            team_names = team_names or []
+        
+        # Construct the full response model
+        user_info = UserInfoResponse(
+            user_id=str(user.id),
+            username=user.username,
+            email=user.email,
+            full_name=user.full_name,
+            role_names=role_names,
+            permission_names=permission_names,
+            team_names=team_names,
+            mfa_enabled=user.mfa_enabled if hasattr(user, 'mfa_enabled') else False
         )
+
+        return RegisterResponse(user=user_info)
         
     except Exception as e:
+        # Rollback transaction on error
+        await db.rollback()
+        
         # Log error without exposing internal details
         try:
             await audit_service.log_suspicious_activity(
@@ -158,8 +201,6 @@ async def register(
             )
         except Exception:
             # If audit logging fails, log locally
-            import logging
-            logger = logging.getLogger(__name__)
             logger.error(f"Registration failed for {register_request.username}: {e}")
         
         raise HTTPException(

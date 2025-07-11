@@ -1,0 +1,44 @@
+[
+  {
+    "test": "Setup",
+    "status": "PASS",
+    "details": "Database connection and services initialized",
+    "timestamp": "2025-07-08T06:37:18.790643+00:00"
+  },
+  {
+    "test": "Config Mode",
+    "status": "PASS",
+    "details": "Config mode working, 6 permissions found",
+    "timestamp": "2025-07-08T06:37:18.790657+00:00"
+  },
+  {
+    "test": "Database Mode",
+    "status": "PASS",
+    "details": "Database mode working properly",
+    "timestamp": "2025-07-08T06:37:18.790661+00:00"
+  },
+  {
+    "test": "Find Test User",
+    "status": "FAIL",
+    "details": "Test user not found",
+    "timestamp": "2025-07-08T06:37:18.805124+00:00"
+  },
+  {
+    "test": "Async Operations",
+    "status": "SKIP",
+    "details": "No test user available",
+    "timestamp": "2025-07-08T06:37:18.805134+00:00"
+  },
+  {
+    "test": "Role Sync",
+    "status": "SKIP",
+    "details": "No test user available",
+    "timestamp": "2025-07-08T06:37:18.805136+00:00"
+  },
+  {
+    "test": "Backward Compatibility",
+    "status": "PASS",
+    "details": "Traditional methods working, 6 permissions",
+    "timestamp": "2025-07-08T06:37:18.805144+00:00"
+  }
+]

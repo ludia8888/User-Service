@@ -28,9 +28,9 @@ class Settings(BaseSettings):
     
     # JWT
     JWT_SECRET: str = "your_super_secret_key_for_user_service_with_32_chars"
-    JWT_ALGORITHM: str = "HS256"
+    JWT_ALGORITHM: str = "RS256"
     JWT_ISSUER: str = "user-service"
-    JWT_AUDIENCE: str = "user"
+    JWT_AUDIENCE: str = "oms"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     

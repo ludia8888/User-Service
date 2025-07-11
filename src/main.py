@@ -19,6 +19,7 @@ from core.security_headers import SecurityHeadersMiddleware
 from core.rate_limit import RateLimitMiddleware
 from middleware.api_key_auth import ServiceAuthMiddleware
 from api import auth_main, iam_adapter, internal, admin_routes
+from api.jwks_router import router as jwks_router
 
 # Setup logging
 setup_logging()
@@ -136,6 +137,15 @@ app.include_router(auth_main.router)
 app.include_router(iam_adapter.router, tags=["IAM Adapter"])
 app.include_router(internal.router, tags=["Internal API"])
 app.include_router(admin_routes.router, tags=["Admin API"])
+app.include_router(jwks_router, tags=["JWKS"])
+
+# Import and include organization routes
+from organization_routes import router as organization_router
+app.include_router(organization_router, tags=["Organizations"])
+
+# Import and include token exchange routes
+from api.v1.token_exchange import router as token_exchange_router
+app.include_router(token_exchange_router, tags=["Token Exchange"])
 
 
 # Custom OpenAPI schema

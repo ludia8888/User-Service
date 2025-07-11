@@ -1,0 +1,58 @@
+[
+  {
+    "test": "Setup",
+    "status": "PASS",
+    "details": "\u2705 Isolated test environment ready",
+    "timestamp": "2025-07-08T07:20:22.190208+00:00",
+    "isolation": "\u2705 ISOLATED"
+  },
+  {
+    "test": "Isolated User Creation",
+    "status": "PASS",
+    "details": "\u2705 Created independent user: test_user_ee291fc3",
+    "timestamp": "2025-07-08T07:20:22.204286+00:00",
+    "isolation": "\u2705 ISOLATED"
+  },
+  {
+    "test": "Role Assignment",
+    "status": "ERROR",
+    "details": "Unconsumed column names: assigned_by",
+    "timestamp": "2025-07-08T07:20:22.207632+00:00",
+    "isolation": "\u2705 ISOLATED"
+  },
+  {
+    "test": "Permission Retrieval",
+    "status": "ERROR",
+    "details": "Unconsumed column names: assigned_by",
+    "timestamp": "2025-07-08T07:20:22.209819+00:00",
+    "isolation": "\u2705 ISOLATED"
+  },
+  {
+    "test": "Role Sync",
+    "status": "FAIL",
+    "details": "No roles synced",
+    "timestamp": "2025-07-08T07:20:22.212689+00:00",
+    "isolation": "\u2705 ISOLATED"
+  },
+  {
+    "test": "Config Mode Isolation",
+    "status": "PASS",
+    "details": "\u2705 Config mode works independently",
+    "timestamp": "2025-07-08T07:20:22.212705+00:00",
+    "isolation": "\u2705 ISOLATED"
+  },
+  {
+    "test": "Sequential Operations",
+    "status": "ERROR",
+    "details": "Unconsumed column names: assigned_by",
+    "timestamp": "2025-07-08T07:20:22.217423+00:00",
+    "isolation": "\u2705 ISOLATED"
+  },
+  {
+    "test": "Cleanup",
+    "status": "PASS",
+    "details": "\u2705 Cleaned up 7 test users",
+    "timestamp": "2025-07-08T07:20:22.225511+00:00",
+    "isolation": "\u2705 ISOLATED"
+  }
+]

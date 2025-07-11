@@ -81,12 +81,11 @@ class RBACService:
         if existing.first():
             return False  # Already assigned
         
-        # Insert new assignment
+        # Insert new assignment (only include columns that exist in schema)
         await self.db.execute(
             user_roles.insert().values(
                 user_id=user_id,
                 role_id=role.id,
-                assigned_by=assigned_by,
                 expires_at=expires_at,
                 assigned_at=datetime.now(timezone.utc)
             )
@@ -149,7 +148,7 @@ class RBACService:
                 SELECT up.permission_id 
                 FROM user_permissions up 
                 WHERE up.user_id = :user_id
-                  AND (up.expires_at IS NULL OR up.expires_at > NOW())
+                  AND (up.expires_at IS NULL OR up.expires_at > CURRENT_TIMESTAMP)
                 
                 UNION
                 
@@ -158,7 +157,7 @@ class RBACService:
                 FROM role_permissions rp
                 JOIN user_roles ur ON ur.role_id = rp.role_id
                 WHERE ur.user_id = :user_id
-                  AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
+                  AND (ur.expires_at IS NULL OR ur.expires_at > CURRENT_TIMESTAMP)
                 
                 UNION
                 
@@ -209,7 +208,7 @@ class RBACService:
                 SELECT up.permission_id 
                 FROM user_permissions up 
                 WHERE up.user_id = :user_id
-                  AND (up.expires_at IS NULL OR up.expires_at > NOW())
+                  AND (up.expires_at IS NULL OR up.expires_at > CURRENT_TIMESTAMP)
                 
                 UNION
                 
@@ -218,7 +217,7 @@ class RBACService:
                 FROM role_permissions rp
                 JOIN user_roles ur ON ur.role_id = rp.role_id
                 WHERE ur.user_id = :user_id
-                  AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
+                  AND (ur.expires_at IS NULL OR ur.expires_at > CURRENT_TIMESTAMP)
                 
                 UNION
                 
@@ -419,7 +418,7 @@ class RBACService:
                     FROM user_roles ur
                     JOIN roles r ON r.id = ur.role_id
                     WHERE r.name = 'admin'
-                      AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
+                      AND (ur.expires_at IS NULL OR ur.expires_at > CURRENT_TIMESTAMP)
                     
                     UNION
                     
@@ -431,7 +430,7 @@ class RBACService:
                            ((p.resource_type = :resource_type OR p.resource_type = '*') AND
                             (p.resource_id = :resource_id OR p.resource_id = '*') AND
                             (p.permission_type = :permission_type OR p.permission_type = '*')))
-                      AND (up.expires_at IS NULL OR up.expires_at > NOW())
+                      AND (up.expires_at IS NULL OR up.expires_at > CURRENT_TIMESTAMP)
                     
                     UNION
                     
@@ -444,7 +443,7 @@ class RBACService:
                            ((p.resource_type = :resource_type OR p.resource_type = '*') AND
                             (p.resource_id = :resource_id OR p.resource_id = '*') AND
                             (p.permission_type = :permission_type OR p.permission_type = '*')))
-                      AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
+                      AND (ur.expires_at IS NULL OR ur.expires_at > CURRENT_TIMESTAMP)
                     
                     UNION
                     
